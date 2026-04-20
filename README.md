@@ -1,19 +1,22 @@
 # National Passport Issuance System (NPIS)
 
-[cite_start]**Lebanese American University - ECE Department** **Course:** Software Engineering (COE461) [cite: 1]  
+**Lebanese American University - ECE Department** **Course:** Software Engineering (COE461)
 
-[cite_start]**Development Team:** * Mahmoud Al Ashkar 
-* [cite_start]Safi Aridi 
-* [cite_start]Jad Mghames 
-* [cite_start]Yasser Zebian 
+A digital passport issuance and renewal platform developed by third-year Computer Engineering students.
+
+## Development Team
+* Mahmoud Al Ashkar
+* Safi Aridi
+* Jad Mghames
+* Yasser Zebian
 
 ## Project Overview
-[cite_start]The National Passport Issuance System (NPIS) is a secure e-government platform designed to digitize the Lebanese passport issuance and renewal workflow[cite: 5]. [cite_start]It replaces traditional manual processing with a role-based, automated web platform to reduce physical congestion at government branches and provide a transparent digital experience[cite: 6].
+NPIS is a secure e-government platform designed to digitize the Lebanese passport workflow. It replaces traditional manual processing with a role-based, automated web platform to reduce physical congestion at government branches and provide a transparent digital experience.
 
 The platform connects three primary actors:
-1. [cite_start]**Citizens:** Apply for passports, upload documents, and track status[cite: 30, 35].
-2. [cite_start]**Mukhtars (Verification Authorities):** Review queues and apply Reliable Electronic Signatures[cite: 30, 155].
-3. [cite_start]**General Security Officers:** Perform final approvals and trigger printing/delivery pipelines [cite: 30, 156-157].
+1. **Citizens:** Apply for passports, upload documents, and track status.
+2. **Mukhtars (Verification Authorities):** Review queues and apply Reliable Electronic Signatures.
+3. **General Security Officers:** Perform final approvals and trigger printing/delivery pipelines.
 
 ## Tech Stack
 * **Frontend:** React, Vite, TypeScript, Tailwind CSS v4
