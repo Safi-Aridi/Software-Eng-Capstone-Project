@@ -22,16 +22,3 @@ The platform connects three primary actors:
 * **Frontend:** React, Vite, TypeScript, Tailwind CSS v4
 * **Backend:** Node.js, Express
 * **Database:** PostgreSQL (Supabase Cloud)
-
-## Local Development Setup
-
-### 1. Database Configuration
-1. Create a `.env` file in the `backend/` directory.
-2. Add the database connection string: `DATABASE_URL=your_postgres_url_here`
-3. *Never commit your `.env` file to Git.*
-
-### 2. Running the Backend
-```bash
-cd backend
-npm install
-node server.js
