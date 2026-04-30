@@ -19,7 +19,7 @@ const CitizenLoginPage = () => {
         throw new Error("Mobile number/email and password are required");
       }
 
-      authService.loginCitizen(identifier, password);
+      await authService.login(identifier, password);
       navigate("/citizen/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");

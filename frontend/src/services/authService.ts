@@ -62,6 +62,37 @@ const getUsers = (): StoredUser[] => {
 };
 
 export const authService = {
+  // FR-02 — Citizen login
+  // TODO: return apiClient.post('/auth/login', { identifier, password });
+  login: async (identifier: string, password: string): Promise<MockUser> => {
+    return authService.loginCitizen(identifier, password);
+  },
+
+  // FR-03 — Citizen registration
+  // TODO: return apiClient.post('/auth/register', data);
+  register: async (data: {
+    mobileNumber: string;
+    email: string;
+    password: string;
+    fullName?: string;
+  }): Promise<MockUser> => {
+    return authService.registerCitizen(data);
+  },
+
+  // Returns the role of the currently authenticated user in uppercase, matching backend convention
+  getUserRole: (): "CITIZEN" | "MUKHTAR" | "OFFICER" | null => {
+    const user = authService.getCurrentUser();
+    if (!user) return null;
+    switch (user.role) {
+      case "citizen":
+        return "CITIZEN";
+      case "mukhtar":
+        return "MUKHTAR";
+      default:
+        return null;
+    }
+  },
+
   loginCitizen: (identifier: string, password: string): MockUser => {
     if (!identifier || !password) {
       throw new Error("Mobile number/email and password are required");
@@ -235,7 +266,7 @@ export const authService = {
     localStorage.setItem(SESSION_KEY, JSON.stringify(updatedUser));
   },
 
-  saveIdentityData: (identityData: any): void => {
+  saveIdentityData: (identityData: unknown): void => {
     const currentUser = authService.getCurrentUser();
     if (!currentUser) return;
     localStorage.setItem(
@@ -244,7 +275,7 @@ export const authService = {
     );
   },
 
-  getSavedIdentityData: (): any => {
+  getSavedIdentityData: (): Record<string, unknown> | null => {
     const currentUser = authService.getCurrentUser();
     if (!currentUser) return null;
     const saved = localStorage.getItem(identityDataKey(currentUser.user.id));
@@ -256,8 +287,7 @@ export const authService = {
     }
   },
 
-  getIdentityData: (): any => {
+  getIdentityData: (): Record<string, unknown> | null => {
     return authService.getSavedIdentityData();
   },
 };
-

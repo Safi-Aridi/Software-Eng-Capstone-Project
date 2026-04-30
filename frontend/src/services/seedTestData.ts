@@ -1,8 +1,10 @@
 import type { StoredUser } from "./authService";
+import type { PassportApplication } from "./applicationService";
 
 const USERS_KEY = "npis_users";
 const kycStatusKey = (userId: string) => `kyc_status_${userId}`;
 const identityDataKey = (userId: string) => `identity_data_${userId}`;
+const applicationsKey = (userId: string) => `applications_${userId}`;
 
 const TEST_USERS: StoredUser[] = [
   {
@@ -52,6 +54,91 @@ const IDENTITY_DATA: Record<string, object> = {
   },
 };
 
+// Dates relative to 2026-04-30
+const APPS_USER_002: PassportApplication[] = [
+  {
+    applicationId: "app_seed_002_001",
+    userId: "user_002",
+    applicationType: "NEW",
+    currentStatus: "MUKHTAR_SIGNED",
+    submissionDate: "2026-04-20T09:00:00.000Z", // 10 days ago
+    trackingNumber: "NPIS-2026-000001",
+    passportValidity: 10,
+    feeAmount: 350_000,
+    documents: {
+      identityDocument: "national_id.pdf",
+      passportPhoto: "photo.jpg",
+      oldPassport: null,
+    },
+    mukhtarFormData: {
+      address: "12 Hamra Street, Beirut",
+      district: "Beirut",
+      mukhtarName: "Mukhtar Hassan Al-Amin",
+    },
+    biometricCaptured: true,
+    statusHistory: [
+      { status: "PENDING_REVIEW", timestamp: "2026-04-20T09:00:00.000Z" },
+      { status: "VERIFIED", timestamp: "2026-04-22T11:30:00.000Z" },
+      { status: "MUKHTAR_SIGNED", timestamp: "2026-04-25T14:00:00.000Z" },
+    ],
+  },
+  {
+    applicationId: "app_seed_002_002",
+    userId: "user_002",
+    applicationType: "RENEWAL",
+    currentStatus: "PENDING_REVIEW",
+    submissionDate: "2026-04-28T10:00:00.000Z", // 2 days ago
+    trackingNumber: "NPIS-2026-000002",
+    passportValidity: 5,
+    feeAmount: 200_000,
+    documents: {
+      identityDocument: "national_id.pdf",
+      passportPhoto: "photo.jpg",
+      oldPassport: "old_passport_scan.pdf",
+    },
+    mukhtarFormData: {
+      address: "12 Hamra Street, Beirut",
+      district: "Beirut",
+      mukhtarName: "Mukhtar Hassan Al-Amin",
+    },
+    biometricCaptured: false,
+    statusHistory: [
+      { status: "PENDING_REVIEW", timestamp: "2026-04-28T10:00:00.000Z" },
+    ],
+  },
+];
+
+const APPS_USER_001: PassportApplication[] = [
+  {
+    applicationId: "app_seed_001_001",
+    userId: "user_001",
+    applicationType: "NEW",
+    currentStatus: "RESUBMISSION_REQUIRED",
+    submissionDate: "2026-04-23T08:00:00.000Z", // 7 days ago
+    trackingNumber: "NPIS-2026-000003",
+    passportValidity: 5,
+    feeAmount: 200_000,
+    documents: {
+      identityDocument: "id_blurry.jpg",
+      passportPhoto: "photo.png",
+      oldPassport: null,
+    },
+    mukhtarFormData: {
+      address: "5 Verdun Road, Beirut",
+      district: "Baabda",
+      mukhtarName: "Mukhtar Karim Nassar",
+    },
+    biometricCaptured: true,
+    statusHistory: [
+      { status: "PENDING_REVIEW", timestamp: "2026-04-23T08:00:00.000Z" },
+      {
+        status: "RESUBMISSION_REQUIRED",
+        timestamp: "2026-04-25T16:00:00.000Z",
+      },
+    ],
+  },
+];
+
 // Seeds exactly 3 test users if npis_users is empty or missing.
 // Does NOT overwrite data on every reload.
 export const seedTestDataIfNeeded = (): void => {
@@ -59,9 +146,13 @@ export const seedTestDataIfNeeded = (): void => {
   if (existing) {
     try {
       const parsed = JSON.parse(existing);
-      if (Array.isArray(parsed) && parsed.length > 0) return;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        // Users already seeded — seed applications if missing
+        seedApplicationsIfNeeded();
+        return;
+      }
     } catch {
-      // fall through to seed
+      // fall through to full reseed
     }
   }
 
@@ -72,6 +163,24 @@ export const seedTestDataIfNeeded = (): void => {
     localStorage.setItem(
       identityDataKey(user.userId),
       JSON.stringify(IDENTITY_DATA[user.userId]),
+    );
+  }
+
+  seedApplicationsIfNeeded();
+};
+
+// Seed mock applications only if not already present for each user.
+const seedApplicationsIfNeeded = (): void => {
+  if (!localStorage.getItem(applicationsKey("user_002"))) {
+    localStorage.setItem(
+      applicationsKey("user_002"),
+      JSON.stringify(APPS_USER_002),
+    );
+  }
+  if (!localStorage.getItem(applicationsKey("user_001"))) {
+    localStorage.setItem(
+      applicationsKey("user_001"),
+      JSON.stringify(APPS_USER_001),
     );
   }
 };

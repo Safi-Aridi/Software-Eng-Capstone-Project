@@ -37,7 +37,7 @@ const CitizenSignupPage = () => {
         throw new Error("Passwords do not match");
       }
 
-      authService.registerCitizen({
+      await authService.register({
         mobileNumber: formData.mobileNumber,
         email: formData.email,
         password: formData.password,

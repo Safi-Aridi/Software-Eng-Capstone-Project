@@ -6,6 +6,9 @@ import AuthorizedLoginPage from "./pages/AuthorizedLoginPage";
 import MukhtarDashboard from "./pages/MukhtarDashboard";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 import IdentityVerificationPage from "./pages/IdentityVerificationPage";
+import NewPassportApplicationPage from "./pages/NewPassportApplicationPage";
+import ApplicationStatusPage from "./pages/ApplicationStatusPage";
+import DocumentResubmissionPage from "./pages/DocumentResubmissionPage";
 import { seedTestDataIfNeeded } from "./services/seedTestData";
 
 // Seed 3 test users into localStorage on first load (no-op if already seeded)
@@ -30,6 +33,33 @@ function App() {
           element={
             <ProtectedRoute requiredRole="citizen">
               <CitizenDashboard />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/application/new"
+          element={
+            <ProtectedRoute requiredRole="citizen">
+              <NewPassportApplicationPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/application/status/:applicationId"
+          element={
+            <ProtectedRoute requiredRole="citizen">
+              <ApplicationStatusPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/application/resubmit/:applicationId"
+          element={
+            <ProtectedRoute requiredRole="citizen">
+              <DocumentResubmissionPage />
             </ProtectedRoute>
           }
         />
