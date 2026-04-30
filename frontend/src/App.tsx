@@ -5,6 +5,11 @@ import CitizenDashboard from "./pages/CitizenDashboard";
 import AuthorizedLoginPage from "./pages/AuthorizedLoginPage";
 import MukhtarDashboard from "./pages/MukhtarDashboard";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
+import IdentityVerificationPage from "./pages/IdentityVerificationPage";
+import { seedTestDataIfNeeded } from "./services/seedTestData";
+
+// Seed 3 test users into localStorage on first load (no-op if already seeded)
+seedTestDataIfNeeded();
 
 function App() {
   return (
@@ -14,6 +19,10 @@ function App() {
         <Route path="/" element={<CitizenLoginPage />} />
         <Route path="/signup" element={<CitizenSignupPage />} />
         <Route path="/authorized-login" element={<AuthorizedLoginPage />} />
+        <Route
+          path="/identity-verification"
+          element={<IdentityVerificationPage />}
+        />
 
         {/* Protected Routes */}
         <Route

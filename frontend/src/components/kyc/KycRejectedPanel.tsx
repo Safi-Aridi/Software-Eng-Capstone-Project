@@ -1,34 +1,37 @@
-import { useState } from 'react';
-import { authService } from '../../services/authService';
+import { useState } from "react";
+import { authService } from "../../services/authService";
 
 const KycRejectedPanel = () => {
   const [file, setFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  
+
   const currentUser = authService.getCurrentUser();
   const kycIssueDescription = currentUser?.kycIssueDescription;
 
   const handleResubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file) {
-      alert('Please select a KYC document to upload');
+      alert("Please select a KYC document to upload");
       return;
     }
 
     setIsSubmitting(true);
-    
+
     // Mock resubmission - update account status back to pending
     setTimeout(() => {
-      authService.updateAccountStatus('PENDING_KYC');
-      
+      authService.updateAccountStatus("PENDING_IDENTITY_VERIFICATION");
+
       // Update extracted identity data
       authService.updateKycData({
-        fullName: 'Pending Extraction',
-        registryNumber: 'Pending Extraction',
-        dob: 'Pending Extraction'
+        fullName: "Pending Extraction",
+        registryNumber: "Pending Extraction",
+        dob: "Pending Extraction",
+        documentType: "Pending Identification",
       });
-      
-      alert('KYC document resubmitted successfully! Your document will be reviewed again.');
+
+      alert(
+        "Identity document resubmitted successfully! Your document will be reviewed again.",
+      );
       setIsSubmitting(false);
     }, 1500);
   };
@@ -38,13 +41,27 @@ const KycRejectedPanel = () => {
       <div className="mb-6">
         <div className="flex items-center mb-4">
           <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mr-4">
-            <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            <svg
+              className="w-6 h-6 text-red-600"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              />
             </svg>
           </div>
           <div>
-            <h2 className="text-2xl font-bold text-gray-800">KYC Resubmission Required</h2>
-            <p className="text-gray-600">Your KYC document needs to be updated</p>
+            <h2 className="text-2xl font-bold text-gray-800 mb-2">
+              Identity Verification Resubmission Required
+            </h2>
+            <p className="text-gray-600">
+              Your identity verification needs to be updated
+            </p>
           </div>
         </div>
       </div>
@@ -59,8 +76,9 @@ const KycRejectedPanel = () => {
       <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-6">
         <h3 className="font-semibold text-orange-800 mb-2">Next Steps</h3>
         <p className="text-orange-700 text-sm">
-          Please upload a new KYC document addressing the issues mentioned above. 
-          Your document will be reviewed again after submission.
+          Please upload a new identity verification document addressing the
+          issues mentioned above. Your document will be reviewed again after
+          submission.
         </p>
       </div>
 
@@ -96,7 +114,7 @@ const KycRejectedPanel = () => {
           disabled={!file || isSubmitting}
           className="w-full bg-orange-600 text-white py-2 px-4 rounded-md hover:bg-orange-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
         >
-          {isSubmitting ? 'Resubmitting...' : 'Resubmit KYC Document'}
+          {isSubmitting ? "Resubmitting..." : "Resubmit Identity Document"}
         </button>
       </form>
 
