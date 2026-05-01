@@ -48,12 +48,39 @@ export class ApplicationsService {
     };
   }
 
-  create(body: any) {
+  async create(body: any) {
+    const query = `
+      INSERT INTO applications (
+        citizen_id,
+        service_type_id,
+        validity_id,
+        assigned_branch_id,
+        application_type,
+        current_status,
+        payment_status,
+        tracking_number
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING *
+    `;
+
+    const trackingNumber = `TRK-${Date.now()}`;
+
+    const result = await this.databaseService.query(query, [
+      body.citizenId,
+      body.serviceTypeId || 1,
+      body.validityId || 1,
+      body.assignedBranchId || 1,
+      body.applicationType || 'new_passport',
+      'Pending',
+      'Pending',
+      trackingNumber,
+    ]);
+
     return {
       success: true,
-      message: 'Create application endpoint reserved and working',
-      receivedData: body,
-      status: 'Pending',
+      message: 'Application created successfully',
+      application: result.rows[0],
     };
   }
 
