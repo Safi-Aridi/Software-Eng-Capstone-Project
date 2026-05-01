@@ -7,6 +7,7 @@ import { ApplicationsModule } from './applications/applications.module';
 import { MukhtarModule } from './mukhtar/mukhtar.module';
 import { OfficerModule } from './officer/officer.module';
 import { AuthModule } from './auth/auth.module';
+import { KycModule } from './kyc/kyc.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { AuthModule } from './auth/auth.module';
     MukhtarModule,
     OfficerModule,
     AuthModule,
+    KycModule,
   ],
   controllers: [AppController],
   providers: [AppService],
