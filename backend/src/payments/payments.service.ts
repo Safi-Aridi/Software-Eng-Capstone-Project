@@ -1,7 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { DatabaseService } from '../database/database.service';
 
 @Injectable()
 export class PaymentsService {
+  constructor(private readonly databaseService: DatabaseService) {}
+
   initiate(body: any) {
     return {
       success: true,
@@ -14,22 +17,59 @@ export class PaymentsService {
     };
   }
 
-  callback(body: any) {
+  async callback(body: any) {
+    const applicationId = body.applicationId;
+    const paymentStatus = body.status || 'Paid';
+
+    const query = `
+      UPDATE applications
+      SET payment_status = $1
+      WHERE application_id = $2
+      RETURNING *
+    `;
+
+    const result = await this.databaseService.query(query, [
+      paymentStatus,
+      applicationId,
+    ]);
+
+    if (result.rowCount === 0) {
+      throw new NotFoundException(
+        `Application with ID ${applicationId} not found`,
+      );
+    }
+
     return {
       success: true,
-      message: 'Payment callback endpoint reserved and working',
-      applicationId: body.applicationId,
+      message: 'Payment callback processed successfully',
+      applicationId,
       transactionId: body.transactionId || 'demo-transaction-id',
-      paymentStatus: body.status || 'Paid',
+      paymentStatus,
+      application: result.rows[0],
     };
   }
 
-  getStatus(applicationId: string) {
+  async getStatus(applicationId: string) {
+    const query = `
+      SELECT application_id, payment_status
+      FROM applications
+      WHERE application_id = $1
+      LIMIT 1
+    `;
+
+    const result = await this.databaseService.query(query, [applicationId]);
+
+    if (result.rowCount === 0) {
+      throw new NotFoundException(
+        `Application with ID ${applicationId} not found`,
+      );
+    }
+
     return {
       success: true,
-      message: 'Payment status endpoint reserved and working',
+      message: 'Payment status retrieved successfully',
       applicationId,
-      paymentStatus: 'Pending',
+      paymentStatus: result.rows[0].payment_status,
     };
   }
 }
