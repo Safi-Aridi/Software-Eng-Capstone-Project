@@ -8,3 +8,4 @@ backend/node_modules/
 
 # Build output
 dist/
+backend_old/
