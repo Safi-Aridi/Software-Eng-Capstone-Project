@@ -22,20 +22,20 @@ export class ApplicationsService {
   }
 
   async findOne(id: string) {
-    const applications = await this.findAll();
+    const query = `
+      SELECT *
+      FROM applications
+      WHERE application_id = $1
+      LIMIT 1
+    `;
 
-    const application = applications.find(
-      (app) =>
-        String(app.id) === id ||
-        String(app.application_id) === id ||
-        String(app.app_id) === id,
-    );
+    const result = await this.databaseService.query(query, [id]);
 
-    if (!application) {
+    if (result.rowCount === 0) {
       throw new NotFoundException(`Application with ID ${id} not found`);
     }
 
-    return application;
+    return result.rows[0];
   }
 
   async getStatus(id: string) {
@@ -66,23 +66,55 @@ export class ApplicationsService {
     };
   }
 
-  signApplication(id: string, body: any) {
+  async signApplication(id: string, body: any) {
+    const query = `
+      UPDATE applications
+      SET current_status = $1
+      WHERE application_id = $2
+      RETURNING *
+    `;
+
+    const result = await this.databaseService.query(query, [
+      'Mukhtar Signed',
+      id,
+    ]);
+
+    if (result.rowCount === 0) {
+      throw new NotFoundException(`Application with ID ${id} not found`);
+    }
+
     return {
       success: true,
-      message: 'Application signing endpoint reserved and working',
+      message: 'Application signed successfully',
       applicationId: id,
       signedBy: body.mukhtarId || 'demo-mukhtar-id',
-      nextStatus: 'Mukhtar Signed',
+      application: result.rows[0],
     };
   }
 
-  approveApplication(id: string, body: any) {
+  async approveApplication(id: string, body: any) {
+    const query = `
+      UPDATE applications
+      SET current_status = $1
+      WHERE application_id = $2
+      RETURNING *
+    `;
+
+    const result = await this.databaseService.query(query, [
+      'Processed for Issuance',
+      id,
+    ]);
+
+    if (result.rowCount === 0) {
+      throw new NotFoundException(`Application with ID ${id} not found`);
+    }
+
     return {
       success: true,
-      message: 'Application approval endpoint reserved and working',
+      message: 'Application approved successfully',
       applicationId: id,
       approvedBy: body.officerId || 'demo-officer-id',
-      nextStatus: 'Processed for Issuance',
+      application: result.rows[0],
     };
   }
 
