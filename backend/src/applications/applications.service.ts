@@ -84,12 +84,55 @@ export class ApplicationsService {
     };
   }
 
-  update(id: string, body: any) {
+  async update(id: string, body: any) {
+    const allowedFields: Record<string, string> = {
+      currentStatus: 'current_status',
+      paymentStatus: 'payment_status',
+      assignedMukhtarId: 'assigned_mukhtar_id',
+      assignedBranchId: 'assigned_branch_id',
+      assignedOfficerId: 'assigned_officer_id',
+      estimatedCompletionDate: 'estimated_completion_date',
+      completedAt: 'completed_at',
+    };
+
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    Object.entries(allowedFields).forEach(([bodyKey, columnName]) => {
+      if (body[bodyKey] !== undefined) {
+        values.push(body[bodyKey]);
+        updates.push(`${columnName} = $${values.length}`);
+      }
+    });
+
+    if (updates.length === 0) {
+      return {
+        success: false,
+        message: 'No valid fields provided for update',
+        allowedFields: Object.keys(allowedFields),
+      };
+    }
+
+    values.push(id);
+
+    const query = `
+      UPDATE applications
+      SET ${updates.join(', ')}
+      WHERE application_id = $${values.length}
+      RETURNING *
+    `;
+
+    const result = await this.databaseService.query(query, values);
+
+    if (result.rowCount === 0) {
+      throw new NotFoundException(`Application with ID ${id} not found`);
+    }
+
     return {
       success: true,
-      message: 'Update application endpoint reserved and working',
+      message: 'Application updated successfully',
       applicationId: id,
-      receivedData: body,
+      application: result.rows[0],
     };
   }
 
