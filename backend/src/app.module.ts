@@ -8,6 +8,7 @@ import { MukhtarModule } from './mukhtar/mukhtar.module';
 import { OfficerModule } from './officer/officer.module';
 import { AuthModule } from './auth/auth.module';
 import { KycModule } from './kyc/kyc.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { KycModule } from './kyc/kyc.module';
     OfficerModule,
     AuthModule,
     KycModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
