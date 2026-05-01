@@ -22,6 +22,7 @@ export interface PassportApplication {
   trackingNumber: string;
   passportValidity: 5 | 10;
   feeAmount: number;
+  paymentStatus?: "UNPAID" | "Paid" | "Failed";
   documents: {
     identityDocument: string | null;
     passportPhoto: string | null;
@@ -35,6 +36,29 @@ export interface PassportApplication {
   biometricCaptured: boolean;
   statusHistory?: StatusHistoryEntry[];
 }
+
+export interface CitizenIdentity {
+  fullName: string;
+  registryNumber: string;
+  dateOfBirth?: string;
+  dob?: string;
+  documentType?: string;
+}
+
+export interface EnrichedApplication {
+  app: PassportApplication;
+  citizenIdentity: CitizenIdentity | null;
+}
+
+export const getIdentityForUser = (userId: string): CitizenIdentity | null => {
+  const stored = localStorage.getItem(`identity_data_${userId}`);
+  if (!stored) return null;
+  try {
+    return JSON.parse(stored) as CitizenIdentity;
+  } catch {
+    return null;
+  }
+};
 
 const applicationsKey = (userId: string) => `applications_${userId}`;
 

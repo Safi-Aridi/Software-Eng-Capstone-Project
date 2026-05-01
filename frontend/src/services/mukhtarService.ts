@@ -1,6 +1,7 @@
 // Handles FR-13 (pending application retrieval), FR-15 (electronic signature), FR-16 (status update)
 
-import type { PassportApplication } from "./applicationService";
+import type { PassportApplication, EnrichedApplication } from "./applicationService";
+import { getIdentityForUser } from "./applicationService";
 
 export interface MukhtarQueueItem {
   applicationId: string;
@@ -12,38 +13,72 @@ export interface MukhtarQueueItem {
   documents: object;
 }
 
-export const mukhtarService = {
-  // FR-13 — Retrieve applications pending mukhtar endorsement
-  // TODO: GET /api/mukhtar/applications?status=VERIFIED
-  getPendingApplications: async (
-    _mukhtarId: string,
-  ): Promise<MukhtarQueueItem[]> => {
-    const result: MukhtarQueueItem[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key?.startsWith("applications_")) continue;
-      try {
-        const apps: PassportApplication[] = JSON.parse(
-          localStorage.getItem(key) || "[]",
-        );
-        for (const app of apps) {
-          if (app.currentStatus === "VERIFIED") {
-            result.push({
-              applicationId: app.applicationId,
-              citizenName: app.mukhtarFormData?.mukhtarName || "Unknown",
-              submissionDate: app.submissionDate,
-              applicationType: app.applicationType,
-              currentStatus: app.currentStatus,
-              jurisdiction: app.mukhtarFormData?.district || "",
-              documents: app.documents,
-            });
-          }
-        }
-      } catch {
-        // skip malformed entries
-      }
+export interface MukhtarSignature {
+  signatureId: string;
+  algorithm: string;
+  timestamp: string;
+  signedBy: string;
+  digest: string;
+}
+
+const signatureKey = (applicationId: string) =>
+  `mukhtar_signature_${applicationId}`;
+
+// Scans all applications_* keys and returns those matching the given status
+const scanApplicationsByStatus = (
+  status: string,
+): PassportApplication[] => {
+  const result: PassportApplication[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key?.startsWith("applications_")) continue;
+    try {
+      const apps: PassportApplication[] = JSON.parse(
+        localStorage.getItem(key) || "[]",
+      );
+      result.push(...apps.filter((a) => a.currentStatus === status));
+    } catch {
+      // skip malformed entries
     }
-    return result;
+  }
+  return result;
+};
+
+// Updates an application across all applications_* keys by applicationId
+const updateApplicationInStorage = (
+  applicationId: string,
+  updater: (app: PassportApplication) => PassportApplication,
+): void => {
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key?.startsWith("applications_")) continue;
+    try {
+      const apps: PassportApplication[] = JSON.parse(
+        localStorage.getItem(key) || "[]",
+      );
+      const idx = apps.findIndex((a) => a.applicationId === applicationId);
+      if (idx >= 0) {
+        apps[idx] = updater(apps[idx]);
+        localStorage.setItem(key, JSON.stringify(apps));
+        break;
+      }
+    } catch {
+      // skip malformed entries
+    }
+  }
+};
+
+export const mukhtarService = {
+  // FR-13 — Retrieve applications pending mukhtar endorsement (enriched with citizen identity)
+  // TODO: GET /api/mukhtar/applications?status=VERIFIED
+  getPendingApplicationsFull: async (
+    _mukhtarId: string,
+  ): Promise<EnrichedApplication[]> => {
+    const apps = scanApplicationsByStatus("VERIFIED");
+    return apps.map((app) => ({
+      app,
+      citizenIdentity: getIdentityForUser(app.userId),
+    }));
   },
 
   // FR-15, FR-16 — Electronically sign and update application status to MUKHTAR_SIGNED
@@ -52,37 +87,52 @@ export const mukhtarService = {
     mukhtarId: string,
     applicationId: string,
   ): Promise<void> => {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key?.startsWith("applications_")) continue;
-      try {
-        const apps: PassportApplication[] = JSON.parse(
-          localStorage.getItem(key) || "[]",
-        );
-        const idx = apps.findIndex((a) => a.applicationId === applicationId);
-        if (idx >= 0) {
-          const signatureMetadata = mukhtarService.getSignatureMetadata(
-            applicationId,
-            mukhtarId,
-          );
-          (apps[idx] as PassportApplication & { signatureMetadata: object }) = {
-            ...apps[idx],
-            currentStatus: "MUKHTAR_SIGNED",
-            statusHistory: [
-              ...(apps[idx].statusHistory ?? []),
-              {
-                status: "MUKHTAR_SIGNED" as const,
-                timestamp: new Date().toISOString(),
-              },
-            ],
-            signatureMetadata,
-          };
-          localStorage.setItem(key, JSON.stringify(apps));
-          break;
-        }
-      } catch {
-        // skip malformed entries
-      }
+    const signature: MukhtarSignature = {
+      signatureId: `sig_${applicationId}_${Date.now()}`,
+      algorithm: "RSA-SHA256",
+      timestamp: new Date().toISOString(),
+      signedBy: mukhtarId,
+      digest: `mock-digest-${Math.random().toString(36).slice(2)}`,
+    };
+
+    // Persist signature separately for officer dashboard lookup
+    localStorage.setItem(signatureKey(applicationId), JSON.stringify(signature));
+
+    updateApplicationInStorage(applicationId, (app) => ({
+      ...app,
+      currentStatus: "MUKHTAR_SIGNED",
+      statusHistory: [
+        ...(app.statusHistory ?? []),
+        { status: "MUKHTAR_SIGNED" as const, timestamp: signature.timestamp },
+      ],
+    }));
+  },
+
+  // FR-16 — Request document resubmission (rejection from mukhtar queue)
+  // TODO: POST /api/mukhtar/applications/:id/reject
+  rejectApplication: async (
+    _mukhtarId: string,
+    applicationId: string,
+  ): Promise<void> => {
+    const timestamp = new Date().toISOString();
+    updateApplicationInStorage(applicationId, (app) => ({
+      ...app,
+      currentStatus: "RESUBMISSION_REQUIRED",
+      statusHistory: [
+        ...(app.statusHistory ?? []),
+        { status: "RESUBMISSION_REQUIRED" as const, timestamp },
+      ],
+    }));
+  },
+
+  // Retrieve stored mukhtar signature for a given application
+  getStoredSignature: (applicationId: string): MukhtarSignature | null => {
+    const stored = localStorage.getItem(signatureKey(applicationId));
+    if (!stored) return null;
+    try {
+      return JSON.parse(stored) as MukhtarSignature;
+    } catch {
+      return null;
     }
   },
 

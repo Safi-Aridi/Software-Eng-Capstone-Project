@@ -130,8 +130,9 @@ const NewPassportApplicationPage = () => {
   const handleSubmit = async () => {
     setIsSubmitting(true);
     const trackingNumber = applicationService.generateTrackingNumber();
+    const applicationId = "app_" + Date.now();
     const application: PassportApplication = {
-      applicationId: "app_" + Date.now(),
+      applicationId,
       userId: currentUser.user.id,
       applicationType: applicationType!,
       currentStatus: "PENDING_REVIEW",
@@ -139,6 +140,7 @@ const NewPassportApplicationPage = () => {
       trackingNumber,
       passportValidity: passportValidity!,
       feeAmount: FEE_MAP[passportValidity!],
+      paymentStatus: "UNPAID",
       documents: {
         identityDocument: documents.identityDocument?.name ?? null,
         passportPhoto: documents.passportPhoto?.name ?? null,
@@ -151,11 +153,7 @@ const NewPassportApplicationPage = () => {
     // TODO: Replace with POST /api/applications when backend is ready
     await applicationService.createApplication(currentUser.user.id, application);
     setIsSubmitting(false);
-    navigate("/citizen/dashboard", {
-      state: {
-        successMessage: `Application submitted! Your tracking number is ${trackingNumber}.`,
-      },
-    });
+    navigate(`/application/pay/${applicationId}`);
   };
 
   return (
@@ -673,7 +671,19 @@ const Step5Review = ({
       )}
     </div>
 
-    <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+    <div className="mt-5 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-start gap-3">
+      <svg className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+      </svg>
+      <div>
+        <p className="text-blue-800 text-sm font-medium">Payment required after submission</p>
+        <p className="text-blue-700 text-sm mt-0.5">
+          You will be redirected to complete payment of <span className="font-semibold">{feeAmount.toLocaleString()} LBP</span> via CashPlus after submitting.
+        </p>
+      </div>
+    </div>
+
+    <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
       <p className="text-yellow-800 text-sm">
         By submitting this application, you confirm that all provided
         information is accurate and complete. Providing false information may

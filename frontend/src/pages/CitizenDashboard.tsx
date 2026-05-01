@@ -6,6 +6,7 @@ import {
   type PassportApplication,
   type ApplicationStatus,
 } from "../services/applicationService";
+import { paymentService } from "../services/paymentService";
 import AccountLockedPanel from "../components/kyc/AccountLockedPanel";
 import IdentityVerificationPendingPanel from "../components/kyc/IdentityVerificationPendingPanel";
 import IdentityVerificationRejectedPanel from "../components/kyc/IdentityVerificationRejectedPanel";
@@ -123,34 +124,79 @@ const StatusBadge = ({ status }: { status: ApplicationStatus }) => (
 
 const ApplicationCard = ({ app }: { app: PassportApplication }) => {
   const navigate = useNavigate();
+  const isUnpaid = app.paymentStatus === "UNPAID";
+  const isPaymentFailed = app.paymentStatus === "Failed";
+
   return (
-    <div className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors">
-      <div className="flex justify-between items-start gap-4">
-        <div className="min-w-0">
-          <h3 className="font-semibold text-gray-800">
-            {app.applicationType === "NEW" ? "New Passport" : "Passport Renewal"}
-          </h3>
-          <p className="text-sm text-gray-500 mt-1">
-            Tracking:{" "}
-            <span className="font-mono text-gray-700">{app.trackingNumber}</span>
-          </p>
-          <p className="text-sm text-gray-500">
-            Submitted:{" "}
-            {new Date(app.submissionDate).toLocaleDateString("en-GB", {
-              day: "numeric",
-              month: "long",
-              year: "numeric",
-            })}
-          </p>
-        </div>
-        <div className="flex flex-col items-end gap-2 shrink-0">
-          <StatusBadge status={app.currentStatus} />
+    <div
+      className={`border rounded-lg overflow-hidden transition-colors ${
+        isUnpaid
+          ? "border-yellow-300"
+          : isPaymentFailed
+            ? "border-red-300"
+            : "border-gray-200 hover:bg-gray-50"
+      }`}
+    >
+      {isUnpaid && (
+        <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-2 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4 text-yellow-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="text-yellow-800 text-xs font-medium">Payment Pending</span>
+          </div>
           <button
-            onClick={() => navigate(`/application/status/${app.applicationId}`)}
-            className="text-xs text-blue-600 hover:text-blue-800 font-medium hover:underline"
+            onClick={() => navigate(`/application/pay/${app.applicationId}`)}
+            className="text-xs bg-yellow-600 text-white px-3 py-1 rounded-full hover:bg-yellow-700 transition-colors font-medium"
           >
-            Track Application
+            Complete Payment
           </button>
+        </div>
+      )}
+      {isPaymentFailed && (
+        <div className="bg-red-50 border-b border-red-200 px-4 py-2 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4 text-red-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            <span className="text-red-800 text-xs font-medium">Payment Failed</span>
+          </div>
+          <button
+            onClick={() => navigate(`/application/pay/${app.applicationId}`)}
+            className="text-xs bg-red-600 text-white px-3 py-1 rounded-full hover:bg-red-700 transition-colors font-medium"
+          >
+            Retry Payment
+          </button>
+        </div>
+      )}
+      <div className="p-4">
+        <div className="flex justify-between items-start gap-4">
+          <div className="min-w-0">
+            <h3 className="font-semibold text-gray-800">
+              {app.applicationType === "NEW" ? "New Passport" : "Passport Renewal"}
+            </h3>
+            <p className="text-sm text-gray-500 mt-1">
+              Tracking:{" "}
+              <span className="font-mono text-gray-700">{app.trackingNumber}</span>
+            </p>
+            <p className="text-sm text-gray-500">
+              Submitted:{" "}
+              {new Date(app.submissionDate).toLocaleDateString("en-GB", {
+                day: "numeric",
+                month: "long",
+                year: "numeric",
+              })}
+            </p>
+          </div>
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            <StatusBadge status={app.currentStatus} />
+            <button
+              onClick={() => navigate(`/application/status/${app.applicationId}`)}
+              className="text-xs text-blue-600 hover:text-blue-800 font-medium hover:underline"
+            >
+              Track Application
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -176,11 +222,15 @@ const AcceptedDashboard = () => {
   );
 
   useEffect(() => {
-    if (currentUser) {
-      applicationService
-        .getApplications(currentUser.user.id)
-        .then(setApplications);
-    }
+    if (!currentUser) return;
+    // FR-30: auto-fail UNPAID applications older than 15 minutes
+    paymentService
+      .checkExpiredPayments(currentUser.user.id)
+      .then(() =>
+        applicationService
+          .getApplications(currentUser.user.id)
+          .then(setApplications),
+      );
   }, [currentUser]);
 
   const handleLogout = () => {

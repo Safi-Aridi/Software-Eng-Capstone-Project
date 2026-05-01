@@ -1,4 +1,4 @@
-export type UserRole = "citizen" | "mukhtar";
+export type UserRole = "citizen" | "mukhtar" | "officer";
 
 export type AccountStatus =
   | "NO_IDENTITY_VERIFICATION"
@@ -29,8 +29,25 @@ export interface MockUser {
   kycIssueDescription?: string;
 }
 
+export interface AuthorizedStoredUser {
+  userId: string;
+  email: string;
+  password: string;
+  fullName: string;
+  role: "mukhtar" | "officer";
+}
+
 const SESSION_KEY = "npis_user";
 const USERS_KEY = "npis_users";
+const AUTHORIZED_USERS_KEY = "npis_authorized_users";
+
+const getAuthorizedUsers = (): AuthorizedStoredUser[] => {
+  try {
+    return JSON.parse(localStorage.getItem(AUTHORIZED_USERS_KEY) || "[]");
+  } catch {
+    return [];
+  }
+};
 
 const kycStatusKey = (userId: string) => `kyc_status_${userId}`;
 const identityDataKey = (userId: string) => `identity_data_${userId}`;
@@ -88,6 +105,8 @@ export const authService = {
         return "CITIZEN";
       case "mukhtar":
         return "MUKHTAR";
+      case "officer":
+        return "OFFICER";
       default:
         return null;
     }
@@ -183,15 +202,25 @@ export const authService = {
       throw new Error("Authorized ID/email and password are required");
     }
 
+    const users = getAuthorizedUsers();
+    const found = users.find(
+      (u) => u.email === identifier && u.password === password,
+    );
+
+    if (!found) {
+      throw new Error(
+        "Invalid credentials. Please check your email and password.",
+      );
+    }
+
     const mockUser: MockUser = {
-      token: "mock-mukhtar-token-" + Date.now(),
-      role: "mukhtar",
+      token: `mock-${found.role}-token-` + Date.now(),
+      role: found.role,
       accountStatus: "ACTIVE",
       user: {
-        id: "mukhtar-" + Date.now(),
-        fullName: "Mukhtar User",
-        mobileNumber: identifier.includes("@") ? undefined : identifier,
-        email: identifier.includes("@") ? identifier : undefined,
+        id: found.userId,
+        fullName: found.fullName,
+        email: found.email,
       },
     };
 

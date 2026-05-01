@@ -20,7 +20,11 @@ const AuthorizedLoginPage = () => {
       }
 
       const user = authService.loginAuthorized(identifier, password);
-      navigate('/mukhtar/dashboard');
+      if (user.role === "officer") {
+        navigate("/officer/dashboard");
+      } else {
+        navigate("/mukhtar/dashboard");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
     } finally {

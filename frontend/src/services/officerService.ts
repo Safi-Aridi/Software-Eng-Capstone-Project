@@ -1,27 +1,70 @@
-// Handles FR-18 (final approval), FR-19 (old passport cancellation)
+// Handles FR-17 (queue retrieval), FR-18 (final approval), FR-19 (old passport cancellation)
 
-import type { PassportApplication } from "./applicationService";
+import type { PassportApplication, EnrichedApplication } from "./applicationService";
+import { getIdentityForUser } from "./applicationService";
+import { mukhtarService } from "./mukhtarService";
+
+const scanApplicationsByStatus = (
+  status: string,
+): PassportApplication[] => {
+  const result: PassportApplication[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key?.startsWith("applications_")) continue;
+    try {
+      const apps: PassportApplication[] = JSON.parse(
+        localStorage.getItem(key) || "[]",
+      );
+      result.push(...apps.filter((a) => a.currentStatus === status));
+    } catch {
+      // skip malformed entries
+    }
+  }
+  return result;
+};
+
+const updateApplicationInStorage = (
+  applicationId: string,
+  updater: (app: PassportApplication) => PassportApplication,
+): void => {
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key?.startsWith("applications_")) continue;
+    try {
+      const apps: PassportApplication[] = JSON.parse(
+        localStorage.getItem(key) || "[]",
+      );
+      const idx = apps.findIndex((a) => a.applicationId === applicationId);
+      if (idx >= 0) {
+        apps[idx] = updater(apps[idx]);
+        localStorage.setItem(key, JSON.stringify(apps));
+        break;
+      }
+    } catch {
+      // skip malformed entries
+    }
+  }
+};
 
 export const officerService = {
-  // FR-18 — Retrieve applications ready for final officer processing
+  // FR-17 — Retrieve applications awaiting final officer processing (enriched)
+  // TODO: GET /api/officer/applications?status=MUKHTAR_SIGNED
+  getProcessingQueueFull: async (
+    _officerId: string,
+  ): Promise<EnrichedApplication[]> => {
+    const apps = scanApplicationsByStatus("MUKHTAR_SIGNED");
+    return apps.map((app) => ({
+      app,
+      citizenIdentity: getIdentityForUser(app.userId),
+    }));
+  },
+
+  // FR-18 — Retrieve applications ready for final officer processing (basic)
   // TODO: GET /api/officer/applications?status=MUKHTAR_SIGNED
   getProcessingQueue: async (
     _officerId: string,
   ): Promise<PassportApplication[]> => {
-    const result: PassportApplication[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key?.startsWith("applications_")) continue;
-      try {
-        const apps: PassportApplication[] = JSON.parse(
-          localStorage.getItem(key) || "[]",
-        );
-        result.push(...apps.filter((a) => a.currentStatus === "MUKHTAR_SIGNED"));
-      } catch {
-        // skip malformed entries
-      }
-    }
-    return result;
+    return scanApplicationsByStatus("MUKHTAR_SIGNED");
   },
 
   // FR-18 — Final approval; transitions application to PROCESSED
@@ -30,33 +73,15 @@ export const officerService = {
     _officerId: string,
     applicationId: string,
   ): Promise<void> => {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key?.startsWith("applications_")) continue;
-      try {
-        const apps: PassportApplication[] = JSON.parse(
-          localStorage.getItem(key) || "[]",
-        );
-        const idx = apps.findIndex((a) => a.applicationId === applicationId);
-        if (idx >= 0) {
-          apps[idx] = {
-            ...apps[idx],
-            currentStatus: "PROCESSED",
-            statusHistory: [
-              ...(apps[idx].statusHistory ?? []),
-              {
-                status: "PROCESSED" as const,
-                timestamp: new Date().toISOString(),
-              },
-            ],
-          };
-          localStorage.setItem(key, JSON.stringify(apps));
-          break;
-        }
-      } catch {
-        // skip malformed entries
-      }
-    }
+    const timestamp = new Date().toISOString();
+    updateApplicationInStorage(applicationId, (app) => ({
+      ...app,
+      currentStatus: "PROCESSED",
+      statusHistory: [
+        ...(app.statusHistory ?? []),
+        { status: "PROCESSED" as const, timestamp },
+      ],
+    }));
   },
 
   // FR-19 — Record old passport cancellation before issuing a renewal
@@ -76,5 +101,10 @@ export const officerService = {
         cancelledBy: officerId,
       }),
     );
+  },
+
+  // Look up mukhtar signature for an application (displayed in officer detail panel)
+  getSignatureForApplication: (applicationId: string) => {
+    return mukhtarService.getStoredSignature(applicationId);
   },
 };
