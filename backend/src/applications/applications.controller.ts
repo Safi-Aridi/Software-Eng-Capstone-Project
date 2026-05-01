@@ -29,4 +29,19 @@ export class ApplicationsController {
   update(@Param('id') id: string, @Body() body: any) {
     return this.applicationsService.update(id, body);
   }
+
+  @Post(':id/sign')
+  signApplication(@Param('id') id: string, @Body() body: any) {
+    return this.applicationsService.signApplication(id, body);
+  }
+
+  @Post(':id/approve')
+  approveApplication(@Param('id') id: string, @Body() body: any) {
+    return this.applicationsService.approveApplication(id, body);
+  }
+
+  @Post(':id/cancel-old-passport')
+  cancelOldPassport(@Param('id') id: string, @Body() body: any) {
+    return this.applicationsService.cancelOldPassport(id, body);
+  }
 }

@@ -44,10 +44,7 @@ export class ApplicationsService {
     return {
       success: true,
       applicationId: id,
-      status:
-        application.current_status ||
-        application.status ||
-        'Unknown',
+      status: application.current_status || application.status || 'Unknown',
     };
   }
 
@@ -66,6 +63,36 @@ export class ApplicationsService {
       message: 'Update application endpoint reserved and working',
       applicationId: id,
       receivedData: body,
+    };
+  }
+
+  signApplication(id: string, body: any) {
+    return {
+      success: true,
+      message: 'Application signing endpoint reserved and working',
+      applicationId: id,
+      signedBy: body.mukhtarId || 'demo-mukhtar-id',
+      nextStatus: 'Mukhtar Signed',
+    };
+  }
+
+  approveApplication(id: string, body: any) {
+    return {
+      success: true,
+      message: 'Application approval endpoint reserved and working',
+      applicationId: id,
+      approvedBy: body.officerId || 'demo-officer-id',
+      nextStatus: 'Processed for Issuance',
+    };
+  }
+
+  cancelOldPassport(id: string, body: any) {
+    return {
+      success: true,
+      message: 'Old passport cancellation endpoint reserved and working',
+      applicationId: id,
+      cancelledBy: body.officerId || 'demo-officer-id',
+      oldPassportStatus: 'Cancelled',
     };
   }
 }
