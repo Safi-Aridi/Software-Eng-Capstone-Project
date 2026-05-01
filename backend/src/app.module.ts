@@ -11,6 +11,7 @@ import { KycModule } from './kyc/kyc.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PaymentsModule } from './payments/payments.module';
 import { DeliveryModule } from './delivery/delivery.module';
+import { AuditModule } from './audit/audit.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { DeliveryModule } from './delivery/delivery.module';
     NotificationsModule,
     PaymentsModule,
     DeliveryModule,
+    AuditModule,
   ],
   controllers: [AppController],
   providers: [AppService],
