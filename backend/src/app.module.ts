@@ -6,6 +6,7 @@ import { DatabaseModule } from './database/database.module';
 import { ApplicationsModule } from './applications/applications.module';
 import { MukhtarModule } from './mukhtar/mukhtar.module';
 import { OfficerModule } from './officer/officer.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { OfficerModule } from './officer/officer.module';
     ApplicationsModule,
     MukhtarModule,
     OfficerModule,
+    AuthModule,
   ],
   controllers: [AppController],
   providers: [AppService],
