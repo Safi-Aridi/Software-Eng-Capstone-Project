@@ -1,9 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class ApplicationsService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly auditService: AuditService,
+  ) {}
 
   async findAll(role?: string) {
     let query = 'SELECT * FROM applications';
@@ -153,11 +157,18 @@ export class ApplicationsService {
       throw new NotFoundException(`Application with ID ${id} not found`);
     }
 
+    await this.auditService.createLog({
+      userId: body.mukhtarId,
+      action: 'APPLICATION_SIGNED_BY_MUKHTAR',
+      entityType: 'application',
+      entityId: id,
+    });
+
     return {
       success: true,
       message: 'Application signed successfully',
       applicationId: id,
-      signedBy: body.mukhtarId || 'demo-mukhtar-id',
+      signedBy: body.mukhtarId,
       application: result.rows[0],
     };
   }
@@ -179,11 +190,18 @@ export class ApplicationsService {
       throw new NotFoundException(`Application with ID ${id} not found`);
     }
 
+    await this.auditService.createLog({
+      userId: body.officerId,
+      action: 'APPLICATION_APPROVED_BY_OFFICER',
+      entityType: 'application',
+      entityId: id,
+    });
+
     return {
       success: true,
       message: 'Application approved successfully',
       applicationId: id,
-      approvedBy: body.officerId || 'demo-officer-id',
+      approvedBy: body.officerId,
       application: result.rows[0],
     };
   }
