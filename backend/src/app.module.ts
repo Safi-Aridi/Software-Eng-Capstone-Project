@@ -10,6 +10,7 @@ import { AuthModule } from './auth/auth.module';
 import { KycModule } from './kyc/kyc.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PaymentsModule } from './payments/payments.module';
+import { DeliveryModule } from './delivery/delivery.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { PaymentsModule } from './payments/payments.module';
     KycModule,
     NotificationsModule,
     PaymentsModule,
+    DeliveryModule,
   ],
   controllers: [AppController],
   providers: [AppService],
