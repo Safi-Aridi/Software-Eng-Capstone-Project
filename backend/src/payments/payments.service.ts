@@ -1,9 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class PaymentsService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly auditService: AuditService,
+  ) {}
 
   initiate(body: any) {
     return {
@@ -38,6 +42,13 @@ export class PaymentsService {
         `Application with ID ${applicationId} not found`,
       );
     }
+
+    await this.auditService.createLog({
+      userId: body.userId,
+      action: 'PAYMENT_CALLBACK_PROCESSED',
+      entityType: 'application',
+      entityId: applicationId,
+    });
 
     return {
       success: true,
