@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { authService } from "../services/authService";
 import {
@@ -225,9 +225,25 @@ const AcceptedDashboard = () => {
 
   // TODO: Replace localStorage read with GET /api/applications?role=citizen when backend is ready
   const [applications, setApplications] = useState<PassportApplication[]>([]);
+  const [statusFilter, setStatusFilter] = useState<"ALL" | ApplicationStatus>(
+    "ALL",
+  );
+  const [sortOrder, setSortOrder] = useState<"NEWEST" | "OLDEST">("NEWEST");
   const [successMessage, setSuccessMessage] = useState<string | null>(
     (location.state as { successMessage?: string } | null)?.successMessage ?? null,
   );
+
+  const visibleApplications = useMemo(() => {
+    const filtered =
+      statusFilter === "ALL"
+        ? applications
+        : applications.filter((a) => a.currentStatus === statusFilter);
+    return [...filtered].sort((a, b) => {
+      const da = new Date(a.submissionDate).getTime();
+      const db = new Date(b.submissionDate).getTime();
+      return sortOrder === "NEWEST" ? db - da : da - db;
+    });
+  }, [applications, statusFilter, sortOrder]);
 
   useEffect(() => {
     if (!userId) return;
@@ -346,7 +362,7 @@ const AcceptedDashboard = () => {
             </button>
           </div>
 
-          {/* Application list or empty state */}
+          {/* Application list, toolbar, or empty state */}
           {applications.length === 0 ? (
             <div className="text-center py-10 bg-gray-50 rounded-lg">
               <svg
@@ -371,11 +387,70 @@ const AcceptedDashboard = () => {
               </p>
             </div>
           ) : (
-            <div className="space-y-3">
-              {applications.map((app) => (
-                <ApplicationCard key={app.applicationId} app={app} />
-              ))}
-            </div>
+            <>
+              <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="text-xs font-medium text-gray-600">
+                    Status
+                    <select
+                      value={statusFilter}
+                      onChange={(e) =>
+                        setStatusFilter(
+                          e.target.value as "ALL" | ApplicationStatus,
+                        )
+                      }
+                      className="ml-2 text-xs bg-white border border-gray-300 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="ALL">All Statuses</option>
+                      {(Object.keys(STATUS_LABELS) as ApplicationStatus[]).map(
+                        (s) => (
+                          <option key={s} value={s}>
+                            {STATUS_LABELS[s]}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </label>
+                  <label className="text-xs font-medium text-gray-600">
+                    Sort
+                    <select
+                      value={sortOrder}
+                      onChange={(e) =>
+                        setSortOrder(e.target.value as "NEWEST" | "OLDEST")
+                      }
+                      className="ml-2 text-xs bg-white border border-gray-300 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="NEWEST">Newest First</option>
+                      <option value="OLDEST">Oldest First</option>
+                    </select>
+                  </label>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Showing {visibleApplications.length} of {applications.length}{" "}
+                  application{applications.length === 1 ? "" : "s"}
+                </p>
+              </div>
+
+              {visibleApplications.length === 0 ? (
+                <div className="text-center py-10 bg-gray-50 rounded-lg">
+                  <p className="text-gray-600 font-medium">
+                    No applications match this filter.
+                  </p>
+                  <button
+                    onClick={() => setStatusFilter("ALL")}
+                    className="text-sm text-blue-600 hover:text-blue-800 hover:underline font-medium mt-2"
+                  >
+                    Clear filter
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {visibleApplications.map((app) => (
+                    <ApplicationCard key={app.applicationId} app={app} />
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
