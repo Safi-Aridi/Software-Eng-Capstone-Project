@@ -74,7 +74,16 @@ const DevStatusPanel = () => {
 
   const updateStatus = (status: ApplicationStatus) => {
     if (!selected) return;
-    const updated = { ...selected, currentStatus: status };
+    const updated: PassportApplication = { ...selected, currentStatus: status };
+    // Seed mock per-document rejection reasons when forcing RESUBMISSION_REQUIRED,
+    // so the resubmission page has something to render.
+    if (status === "RESUBMISSION_REQUIRED") {
+      updated.resubmissionReasons = {
+        identityDocument: "Photo on ID does not match passport photo",
+      };
+    } else {
+      updated.resubmissionReasons = undefined;
+    }
     updateApplicationInStorage(updated);
     setApps((prev) =>
       prev.map((a) => (a.applicationId === selectedId ? updated : a)),

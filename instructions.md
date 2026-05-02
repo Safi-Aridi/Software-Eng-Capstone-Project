@@ -1,25 +1,18 @@
-Add a pre-application checklist interstitial screen to the NPIS passport application flow.
+Improve the DocumentResubmissionPage to show per-document rejection reasons and acceptance criteria.
 
-Context: The application form starts at `/application/new` with `NewPassportApplicationPage.tsx`. Citizens currently jump straight into the multi-step form.
+Context: `DocumentResubmissionPage.tsx` currently shows upload fields but no guidance. The application object in localStorage has a `resubmissionReasons` field (add it if missing) that can contain an object like:
+`{ identityDocument: "Photo on ID does not match passport photo", passportPhoto: "Background is not pure white" }`
 
 Tasks:
-1. Create a new page `src/pages/PreApplicationChecklistPage.tsx` at route `/application/checklist`.
-2. The page shows two tabs or toggle sections: "New Passport" and "Passport Renewal".
-3. For each type, display a checklist of required documents with acceptance criteria:
+1. Update the `PassportApplication` interface in `applicationService.ts` to include:
+   `resubmissionReasons?: { identityDocument?: string; passportPhoto?: string; oldPassport?: string }`
 
-   New Passport:
-   - Lebanese National ID Card OR Civil Registry Extract (issued < 3 months ago, QR code scannable)
-   - Passport Photo (3.5 x 4.5 cm, white background, clear facial visibility)
-   - Device with front-facing camera (for biometric capture)
+2. In `DocumentResubmissionPage.tsx`:
+   - Show a red alert banner at the top: "Your documents require corrections. Please review the issues below and resubmit."
+   - For each document field (Identity Document, Passport Photo, Old Passport if renewal), if a rejection reason exists for that field, show it as a red inline error beneath the field label.
+   - Below each rejection reason, show the acceptance criteria for that document type (same criteria as the pre-application checklist).
+   - If no rejection reason exists for a field, show it normally with a green "✓ Previously accepted" indicator so the citizen knows not to re-upload it (but still allow re-upload).
 
-   Passport Renewal:
-   - Lebanese National ID Card OR Civil Registry Extract (issued < 3 months ago)
-   - Passport Photo (3.5 x 4.5 cm, white background, clear facial visibility)
-   - Old Passport (legible MRZ, not reported lost/stolen)
+3. In `DevStatusPanel.tsx` (dev tool), when setting status to `RESUBMISSION_REQUIRED`, also seed mock `resubmissionReasons` onto the application: `{ identityDocument: "Photo on ID does not match passport photo" }`.
 
-4. Each checklist item has a checkbox the user can tick. The "I'm Ready — Start Application" button is disabled until all items are checked.
-5. On clicking "I'm Ready", navigate to `/application/new`.
-6. Update `CitizenDashboard.tsx`: the "Apply for Passport" button should now navigate to `/application/checklist` instead of `/application/new`.
-7. Add route `/application/checklist` to `App.tsx` (protected, citizen only).
-
-Style: Match existing Tailwind CSS dashboard design. Make it feel informative and reassuring, not bureaucratic.
+Style: Match existing Tailwind CSS design. Use red for errors, green for accepted, amber for warnings.

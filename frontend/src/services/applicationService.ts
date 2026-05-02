@@ -37,6 +37,12 @@ export interface PassportApplication {
   };
   biometricCaptured: boolean;
   statusHistory?: StatusHistoryEntry[];
+  // Per-document rejection reasons populated when status is RESUBMISSION_REQUIRED
+  resubmissionReasons?: {
+    identityDocument?: string;
+    passportPhoto?: string;
+    oldPassport?: string;
+  };
 }
 
 export interface CitizenIdentity {
@@ -120,6 +126,8 @@ export const applicationService = {
         ...apps[idx],
         documents,
         currentStatus: "PENDING_REVIEW",
+        // Clear stale rejection reasons — they referred to the previous upload
+        resubmissionReasons: undefined,
         statusHistory: [
           ...(apps[idx].statusHistory ?? []),
           { status: "PENDING_REVIEW", timestamp: new Date().toISOString() },
