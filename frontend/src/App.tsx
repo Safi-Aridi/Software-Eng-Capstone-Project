@@ -9,6 +9,7 @@ import ProtectedRoute from "./components/auth/ProtectedRoute";
 import IdentityVerificationPage from "./pages/IdentityVerificationPage";
 import NewPassportApplicationPage from "./pages/NewPassportApplicationPage";
 import PreApplicationChecklistPage from "./pages/PreApplicationChecklistPage";
+import CitizenProfilePage from "./pages/CitizenProfilePage";
 import ApplicationStatusPage from "./pages/ApplicationStatusPage";
 import DocumentResubmissionPage from "./pages/DocumentResubmissionPage";
 import PaymentPage from "./pages/PaymentPage";
@@ -34,6 +35,14 @@ const router = createBrowserRouter([
         element: (
           <ProtectedRoute requiredRole="citizen">
             <CitizenDashboard />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "/citizen/profile",
+        element: (
+          <ProtectedRoute requiredRole="citizen">
+            <CitizenProfilePage />
           </ProtectedRoute>
         ),
       },

@@ -403,6 +403,58 @@ export const authService = {
     localStorage.setItem(SESSION_KEY, JSON.stringify(updatedUser));
   },
 
+  // Updates contact fields (email/mobile) on the user record AND active session.
+  // Returns false with a message if the new value collides with another account.
+  updateContactInfo: (
+    update: { email?: string; mobileNumber?: string },
+  ): { success: boolean; message?: string } => {
+    const currentUser = authService.getCurrentUser();
+    if (!currentUser) return { success: false, message: "Not authenticated" };
+
+    const userId = currentUser.user.id;
+    const users = getUsers();
+    const idx = users.findIndex((u) => u.userId === userId);
+    if (idx < 0) return { success: false, message: "Account not found" };
+
+    if (update.email !== undefined) {
+      const collision = users.find(
+        (u) => u.userId !== userId && u.email === update.email,
+      );
+      if (collision)
+        return {
+          success: false,
+          message: "That email is already used by another account.",
+        };
+      users[idx].email = update.email;
+    }
+    if (update.mobileNumber !== undefined) {
+      const collision = users.find(
+        (u) => u.userId !== userId && u.mobileNumber === update.mobileNumber,
+      );
+      if (collision)
+        return {
+          success: false,
+          message: "That mobile number is already used by another account.",
+        };
+      users[idx].mobileNumber = update.mobileNumber;
+    }
+
+    localStorage.setItem(USERS_KEY, JSON.stringify(users));
+
+    const updatedSession: MockUser = {
+      ...currentUser,
+      user: {
+        ...currentUser.user,
+        ...(update.email !== undefined && { email: update.email }),
+        ...(update.mobileNumber !== undefined && {
+          mobileNumber: update.mobileNumber,
+        }),
+      },
+    };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(updatedSession));
+    return { success: true };
+  },
+
   updateKycData: (identityData: {
     fullName: string;
     registryNumber: string;
