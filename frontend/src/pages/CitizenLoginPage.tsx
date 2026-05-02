@@ -53,6 +53,7 @@ const CitizenLoginPage = () => {
           <p className="text-gray-600">Secure citizen access portal</p>
         </div>
 
+        {/* TODO FR-05: Add OTP login option as alternative to password */}
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">

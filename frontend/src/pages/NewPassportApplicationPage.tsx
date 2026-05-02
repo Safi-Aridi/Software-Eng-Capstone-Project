@@ -6,6 +6,7 @@ import {
   type PassportApplication,
 } from "../services/applicationService";
 import EnhancedFileUploadField from "../components/upload/EnhancedFileUploadField";
+import BiometricCaptureWidget from "../components/BiometricCaptureWidget";
 
 type ApplicationType = "NEW" | "RENEWAL";
 type ValidityYears = 5 | 10;
@@ -24,12 +25,21 @@ interface MukhtarForm {
 
 const FEE_MAP: Record<ValidityYears, number> = { 5: 200_000, 10: 350_000 };
 
-const STEP_LABELS = [
-  "Type",
-  "Details",
-  "Documents",
-  "Mukhtar & Biometrics",
-  "Review",
+const STEP_LABELS_NEW = [
+  "Application Type",
+  "Passport Details",
+  "Document Upload",
+  "Mukhtar Details",
+  "Biometric Capture",
+  "Review & Submit",
+];
+
+const STEP_LABELS_RENEWAL = [
+  "Application Type",
+  "Passport Details",
+  "Document Upload",
+  "Mukhtar Details",
+  "Review & Submit",
 ];
 
 const ALLOWED_DOC_EXTS = ["pdf", "jpg", "jpeg", "png"];
@@ -94,8 +104,9 @@ const NewPassportApplicationPage = () => {
       if (!mukhtarForm.district.trim()) errs.district = "District / Qada is required.";
       if (!mukhtarForm.mukhtarName.trim())
         errs.mukhtarName = "Mukhtar's name is required.";
-      if (applicationType === "NEW" && !biometricCaptured)
-        errs.biometric = "Biometric capture must be completed before proceeding.";
+    }
+    if (step === 5 && applicationType === "NEW" && !biometricCaptured) {
+      errs.biometric = "Biometric capture must be completed before proceeding.";
     }
 
     if (Object.keys(errs).length > 0) {
@@ -104,12 +115,22 @@ const NewPassportApplicationPage = () => {
     }
 
     setStepErrors({});
-    setStep((s) => s + 1);
+    // Renewal skips step 5 (biometrics): jump from 4 to 6
+    if (applicationType === "RENEWAL" && step === 4) {
+      setStep(6);
+    } else {
+      setStep((s) => s + 1);
+    }
   };
 
   const goBack = () => {
     setStepErrors({});
-    setStep((s) => s - 1);
+    // Renewal skips step 5 when going back from step 6
+    if (applicationType === "RENEWAL" && step === 6) {
+      setStep(4);
+    } else {
+      setStep((s) => s - 1);
+    }
   };
 
   // Type validation now lives inside EnhancedFileUploadField; parent only stores the accepted file.
@@ -168,7 +189,10 @@ const NewPassportApplicationPage = () => {
           </p>
         </div>
 
-        <ProgressBar currentStep={step} labels={STEP_LABELS} />
+        <ProgressBar
+          currentStep={applicationType === "RENEWAL" && step === 6 ? 5 : step}
+          labels={applicationType === "RENEWAL" ? STEP_LABELS_RENEWAL : STEP_LABELS_NEW}
+        />
 
         <div className="bg-white rounded-lg shadow-md p-6 mt-6">
           {step === 1 && (
@@ -201,20 +225,24 @@ const NewPassportApplicationPage = () => {
             />
           )}
           {step === 4 && (
-            <Step4MukhtarBiometrics
-              applicationType={applicationType!}
+            <Step4MukhtarDetails
               mukhtarForm={mukhtarForm}
               onMukhtarChange={handleMukhtarChange}
+              errors={stepErrors}
+            />
+          )}
+          {step === 5 && applicationType === "NEW" && (
+            <Step5BiometricCapture
               biometricCaptured={biometricCaptured}
               onBiometricCapture={() => {
                 setBiometricCaptured(true);
                 setStepErrors((p) => ({ ...p, biometric: "" }));
               }}
-              errors={stepErrors}
+              error={stepErrors.biometric}
             />
           )}
-          {step === 5 && (
-            <Step5Review
+          {step === 6 && (
+            <Step6Review
               applicationType={applicationType!}
               passportValidity={passportValidity!}
               feeAmount={FEE_MAP[passportValidity!]}
@@ -236,7 +264,7 @@ const NewPassportApplicationPage = () => {
             ) : (
               <div />
             )}
-            {step < 5 ? (
+            {step < 6 ? (
               <button
                 onClick={goNext}
                 className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
@@ -490,33 +518,26 @@ const Step3Documents = ({
   </div>
 );
 
-// ─── Step 4: Mukhtar Form & Biometrics ───────────────────────────────────────
+// ─── Step 4: Mukhtar Details ─────────────────────────────────────────────────
 
-const Step4MukhtarBiometrics = ({
-  applicationType,
+const Step4MukhtarDetails = ({
   mukhtarForm,
   onMukhtarChange,
-  biometricCaptured,
-  onBiometricCapture,
   errors,
 }: {
-  applicationType: ApplicationType;
   mukhtarForm: MukhtarForm;
   onMukhtarChange: (field: keyof MukhtarForm, value: string) => void;
-  biometricCaptured: boolean;
-  onBiometricCapture: () => void;
   errors: Record<string, string>;
 }) => (
   <div>
     <h2 className="text-lg font-semibold text-gray-800 mb-1">
-      Mukhtar Information{applicationType === "NEW" ? " & Biometrics" : ""}
+      Mukhtar Details
     </h2>
     <p className="text-gray-500 text-sm mb-6">
-      Provide your mukhtar's details
-      {applicationType === "NEW" ? " and complete biometric capture" : ""}.
+      Provide your mukhtar's details.
     </p>
 
-    <div className="space-y-4 mb-6">
+    <div className="space-y-4">
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">
           Address <span className="text-red-500">*</span>
@@ -568,41 +589,54 @@ const Step4MukhtarBiometrics = ({
         )}
       </div>
     </div>
-
-    {applicationType === "NEW" && (
-      <div
-        className={`p-5 rounded-lg border-2 ${biometricCaptured ? "border-green-400 bg-green-50" : "border-gray-200 bg-gray-50"}`}
-      >
-        <h3 className="font-semibold text-gray-800 mb-1">Biometric Capture</h3>
-        <p className="text-gray-600 text-sm mb-4">
-          Biometric data is required for all new passport applications.
-        </p>
-        {/* TODO: Replace with real biometric capture component (FR-07) */}
-        {biometricCaptured ? (
-          <div className="flex items-center text-green-700 font-medium">
-            <span className="mr-2 text-xl">✓</span> Biometric capture complete
-          </div>
-        ) : (
-          <>
-            <button
-              onClick={onBiometricCapture}
-              className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors text-sm"
-            >
-              Start Biometric Capture (Simulated)
-            </button>
-            {errors.biometric && (
-              <p className="text-red-600 text-xs mt-2">{errors.biometric}</p>
-            )}
-          </>
-        )}
-      </div>
-    )}
   </div>
 );
 
-// ─── Step 5: Review & Submit ──────────────────────────────────────────────────
+// ─── Step 5: Biometric Capture (NEW applications only) ────────────────────────
 
-const Step5Review = ({
+const Step5BiometricCapture = ({
+  biometricCaptured,
+  onBiometricCapture,
+  error,
+}: {
+  biometricCaptured: boolean;
+  onBiometricCapture: () => void;
+  error?: string;
+}) => (
+  <div>
+    <h2 className="text-lg font-semibold text-gray-800 mb-1">
+      Biometric Capture
+    </h2>
+    <p className="text-gray-500 text-sm mb-6">
+      Biometric data is required for all new passport applications.
+    </p>
+
+    {biometricCaptured ? (
+      <div className="flex items-center gap-2 text-green-700 font-medium p-4 bg-green-50 border border-green-200 rounded-lg">
+        <span className="text-2xl">✓</span> Biometric capture complete
+      </div>
+    ) : (
+      <BiometricCaptureWidget
+        onCaptureComplete={(result) => {
+          if (result.faceCaptured && result.fingerprintsCaptured) {
+            onBiometricCapture();
+          }
+        }}
+      />
+    )}
+
+    <p className="text-gray-500 text-xs mt-4">
+      Biometric data is encrypted and stored in compliance with ISO/IEC 19794-4
+      and ISO/IEC 19794-5.
+    </p>
+
+    {error && <p className="text-red-600 text-xs mt-3">{error}</p>}
+  </div>
+);
+
+// ─── Step 6: Review & Submit ──────────────────────────────────────────────────
+
+const Step6Review = ({
   applicationType,
   passportValidity,
   feeAmount,

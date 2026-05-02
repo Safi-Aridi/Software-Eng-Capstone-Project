@@ -378,6 +378,17 @@ const seedSignaturesIfNeeded = (): void => {
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
+// Force clears all application data then re-seeds — for DevStatusPanel use.
+export const reseedTestData = (): void => {
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith("applications_")) localStorage.removeItem(k);
+  }
+  localStorage.removeItem(USERS_KEY);
+  localStorage.removeItem(AUTHORIZED_USERS_KEY);
+  seedTestDataIfNeeded();
+};
+
 // Seeds all test data into localStorage on first load (no-op if already seeded).
 export const seedTestDataIfNeeded = (): void => {
   // Seed citizen users

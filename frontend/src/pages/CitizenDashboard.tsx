@@ -14,18 +14,22 @@ import IdentityVerificationRejectedPanel from "../components/kyc/IdentityVerific
 const CitizenDashboard = () => {
   const navigate = useNavigate();
   const currentUser = authService.getCurrentUser();
+  // getCurrentUser() returns a fresh object each call, so depend on stable primitives
+  // (id + role) to prevent the effect from re-firing on every render.
+  const userId = currentUser?.user.id;
+  const userRole = currentUser?.role;
 
   useEffect(() => {
-    if (!currentUser) {
+    if (!userId) {
       navigate("/");
       return;
     }
-    if (currentUser.role !== "citizen") {
+    if (userRole !== "citizen") {
       authService.logout();
       navigate("/");
       return;
     }
-  }, [currentUser, navigate]);
+  }, [userId, userRole, navigate]);
 
   if (!currentUser) return null;
 
@@ -214,6 +218,9 @@ const AcceptedDashboard = () => {
     (identityData?.fullName as string | undefined) ||
     currentUser?.user?.fullName ||
     "Citizen";
+  // Stable primitive — getCurrentUser() returns a fresh object reference each call,
+  // so depending on it directly causes an infinite re-render loop.
+  const userId = currentUser?.user.id;
 
   // TODO: Replace localStorage read with GET /api/applications?role=citizen when backend is ready
   const [applications, setApplications] = useState<PassportApplication[]>([]);
@@ -222,16 +229,14 @@ const AcceptedDashboard = () => {
   );
 
   useEffect(() => {
-    if (!currentUser) return;
+    if (!userId) return;
     // FR-30: auto-fail UNPAID applications older than 15 minutes
     paymentService
-      .checkExpiredPayments(currentUser.user.id)
+      .checkExpiredPayments(userId)
       .then(() =>
-        applicationService
-          .getApplications(currentUser.user.id)
-          .then(setApplications),
+        applicationService.getApplications(userId).then(setApplications),
       );
-  }, [currentUser]);
+  }, [userId]);
 
   const handleLogout = () => {
     authService.logout();

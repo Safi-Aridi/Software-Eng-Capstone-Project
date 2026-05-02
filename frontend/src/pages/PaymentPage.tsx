@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useBlocker } from "react-router-dom";
 import { authService } from "../services/authService";
 import {
   applicationService,
@@ -43,16 +43,13 @@ const PaymentPage = () => {
       });
   }, []);
 
-  // Warn before navigating away while payment is incomplete
-  useEffect(() => {
-    if (outcome !== null) return;
-    const handler = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = "";
-    };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [outcome]);
+  // Block in-app navigation while payment is still pending
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      outcome === null &&
+      !isLoading &&
+      currentLocation.pathname !== nextLocation.pathname,
+  );
 
   // Success auto-redirect countdown
   useEffect(() => {
@@ -281,6 +278,33 @@ const PaymentPage = () => {
               >
                 Return to Dashboard
               </button>
+            </div>
+          </div>
+        )}
+
+        {blocker.state === "blocked" && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
+            <div className="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full">
+              <h3 className="text-lg font-bold text-gray-800 mb-2">
+                Leave this page?
+              </h3>
+              <p className="text-gray-600 text-sm mb-5">
+                You have an unpaid application. Are you sure you want to leave?
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => blocker.reset?.()}
+                  className="flex-1 bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 transition-colors font-medium"
+                >
+                  Stay
+                </button>
+                <button
+                  onClick={() => blocker.proceed?.()}
+                  className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-md hover:bg-gray-50 transition-colors"
+                >
+                  Leave
+                </button>
+              </div>
             </div>
           </div>
         )}

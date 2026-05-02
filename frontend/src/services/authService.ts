@@ -41,6 +41,32 @@ const SESSION_KEY = "npis_user";
 const USERS_KEY = "npis_users";
 const AUTHORIZED_USERS_KEY = "npis_authorized_users";
 
+const OTP_TTL_MS = 5 * 60 * 1000;
+const OTP_MAX_ATTEMPTS = 3;
+const otpKey = (mobile: string) => `otp_${mobile}`;
+
+interface OtpRecord {
+  code: string;
+  expiresAt: number;
+  attempts: number;
+}
+
+const readOtp = (mobile: string): OtpRecord | null => {
+  const raw = localStorage.getItem(otpKey(mobile));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as OtpRecord;
+  } catch {
+    return null;
+  }
+};
+
+const writeOtp = (mobile: string, record: OtpRecord): void => {
+  localStorage.setItem(otpKey(mobile), JSON.stringify(record));
+};
+
+export type OtpResult = "SUCCESS" | "INVALID" | "EXPIRED" | "LOCKED";
+
 const getAuthorizedUsers = (): AuthorizedStoredUser[] => {
   try {
     return JSON.parse(localStorage.getItem(AUTHORIZED_USERS_KEY) || "[]");
@@ -318,5 +344,46 @@ export const authService = {
 
   getIdentityData: (): Record<string, unknown> | null => {
     return authService.getSavedIdentityData();
+  },
+
+  // FR-02 — Generate a 6-digit OTP for the given mobile number
+  // TODO: Replace with POST /api/otp/send — triggers real SMS via gateway
+  generateOtp: (mobile: string): string => {
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    writeOtp(mobile, {
+      code,
+      expiresAt: Date.now() + OTP_TTL_MS,
+      attempts: 0,
+    });
+    console.log(`[DEV] OTP for ${mobile}: ${code}`);
+    return code;
+  },
+
+  // FR-02 — Validate an entered OTP for the given mobile number
+  // TODO: Replace with POST /api/otp/validate
+  validateOtp: (mobile: string, entered: string): OtpResult => {
+    const record = readOtp(mobile);
+    if (!record) return "EXPIRED";
+
+    if (record.attempts >= OTP_MAX_ATTEMPTS) return "LOCKED";
+    if (Date.now() > record.expiresAt) return "EXPIRED";
+
+    if (record.code !== entered) {
+      const updated: OtpRecord = { ...record, attempts: record.attempts + 1 };
+      writeOtp(mobile, updated);
+      if (updated.attempts >= OTP_MAX_ATTEMPTS) return "LOCKED";
+      return "INVALID";
+    }
+
+    localStorage.removeItem(otpKey(mobile));
+    return "SUCCESS";
+  },
+
+  getOtpAttempts: (mobile: string): number => {
+    return readOtp(mobile)?.attempts ?? 0;
+  },
+
+  clearOtp: (mobile: string): void => {
+    localStorage.removeItem(otpKey(mobile));
   },
 };

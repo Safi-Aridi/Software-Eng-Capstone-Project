@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(curl -s -X POST \"http://localhost:5174/__inspect\")",
+      "Bash(curl -s \"http://localhost:5174/src/App.tsx?t=$\\(date +%s\\)\")"
+    ]
+  },
+  "spinnerTipsEnabled": true,
+  "prefersReducedMotion": false
+}
