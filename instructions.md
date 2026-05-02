@@ -1,15 +1,11 @@
-Add filtering and sorting to the applications list on CitizenDashboard.
+Add an explicit fee acknowledgment checkbox to Step 6 (Review & Submit) of the passport application form.
 
-Context: CitizenDashboard.tsx shows a flat list of application cards. There may be many applications over time.
+Context: `NewPassportApplicationPage.tsx` Step 6 already shows the fee amount. The citizen currently submits without explicitly confirming.
 
 Tasks:
-1. Above the applications list, add a filter/sort toolbar with:
-   - Status filter dropdown: "All Statuses" | PENDING_REVIEW | VERIFIED | MUKHTAR_SIGNED | PROCESSED | RESUBMISSION_REQUIRED | DELIVERED
-   - Sort dropdown: "Newest First" (default) | "Oldest First"
-   - A text showing the count: "Showing X of Y applications"
+1. In Step 6 of `NewPassportApplicationPage.tsx`, add a checkbox directly above the "Submit Application" button with label:
+   "I acknowledge that I am required to pay [fee amount in LBP] to complete this application. I understand that failure to complete payment within 15 minutes will result in the application being cancelled."
+2. The "Submit Application" button is disabled until this checkbox is checked.
+3. The checkbox state resets if the user navigates back to a previous step.
 
-2. Apply the filter and sort reactively — no page reload, pure state.
-3. If the filtered result is empty, show a friendly empty state: "No applications match this filter."
-4. Preserve the existing RESUBMISSION_REQUIRED warning banners and UNPAID payment banners on the cards — they should still appear when those cards are visible.
-
-Style: Match existing Tailwind CSS design. Keep the toolbar compact and clean.
+This is a small but required change per FR-09 and UX requirements.

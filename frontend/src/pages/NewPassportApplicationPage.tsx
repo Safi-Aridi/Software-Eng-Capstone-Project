@@ -69,6 +69,7 @@ const NewPassportApplicationPage = () => {
     mukhtarName: "",
   });
   const [biometricCaptured, setBiometricCaptured] = useState(false);
+  const [feeAcknowledged, setFeeAcknowledged] = useState(false);
   const [stepErrors, setStepErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -125,6 +126,9 @@ const NewPassportApplicationPage = () => {
 
   const goBack = () => {
     setStepErrors({});
+    // Reset the fee acknowledgement so it must be re-confirmed if the user
+    // returns to Step 6 — they may change values that affect the fee.
+    setFeeAcknowledged(false);
     // Renewal skips step 5 when going back from step 6
     if (applicationType === "RENEWAL" && step === 6) {
       setStep(4);
@@ -249,6 +253,8 @@ const NewPassportApplicationPage = () => {
               documents={documents}
               mukhtarForm={mukhtarForm}
               biometricCaptured={biometricCaptured}
+              feeAcknowledged={feeAcknowledged}
+              onToggleFeeAcknowledged={() => setFeeAcknowledged((v) => !v)}
             />
           )}
 
@@ -274,7 +280,7 @@ const NewPassportApplicationPage = () => {
             ) : (
               <button
                 onClick={handleSubmit}
-                disabled={isSubmitting}
+                disabled={isSubmitting || !feeAcknowledged}
                 className="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
               >
                 {isSubmitting ? "Submitting..." : "Submit Application"}
@@ -643,6 +649,8 @@ const Step6Review = ({
   documents,
   mukhtarForm,
   biometricCaptured,
+  feeAcknowledged,
+  onToggleFeeAcknowledged,
 }: {
   applicationType: ApplicationType;
   passportValidity: ValidityYears;
@@ -650,6 +658,8 @@ const Step6Review = ({
   documents: DocumentFiles;
   mukhtarForm: MukhtarForm;
   biometricCaptured: boolean;
+  feeAcknowledged: boolean;
+  onToggleFeeAcknowledged: () => void;
 }) => (
   <div>
     <h2 className="text-lg font-semibold text-gray-800 mb-1">
@@ -724,6 +734,35 @@ const Step6Review = ({
         result in rejection.
       </p>
     </div>
+
+    {/* FR-09 — explicit fee acknowledgement, gates Submit Application */}
+    <label
+      className={`mt-4 flex items-start gap-3 p-4 rounded-lg border cursor-pointer transition-colors ${
+        feeAcknowledged
+          ? "border-green-300 bg-green-50"
+          : "border-gray-300 bg-white hover:bg-gray-50"
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={feeAcknowledged}
+        onChange={onToggleFeeAcknowledged}
+        className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
+      />
+      <span
+        className={`text-sm ${
+          feeAcknowledged ? "text-green-800" : "text-gray-700"
+        }`}
+      >
+        I acknowledge that I am required to pay{" "}
+        <span className="font-semibold">
+          {feeAmount.toLocaleString()} LBP
+        </span>{" "}
+        to complete this application. I understand that failure to complete
+        payment within 15 minutes will result in the application being
+        cancelled.
+      </span>
+    </label>
   </div>
 );
 
