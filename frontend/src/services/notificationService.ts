@@ -48,14 +48,15 @@ export const notificationService = {
   },
 
   // Called internally when application status changes (FR-23, FR-32)
-  addNotification: (
+  // TODO: POST /api/notifications — backend will create these automatically
+  create: (
     userId: string,
     notification: Omit<Notification, "notificationId" | "createdAt" | "read">,
   ): void => {
     const notifications = notificationService.getNotifications(userId);
     const newNotification: Notification = {
       ...notification,
-      notificationId: "notif_" + Date.now(),
+      notificationId: "notif_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
       read: false,
       createdAt: new Date().toISOString(),
     };
@@ -64,6 +65,14 @@ export const notificationService = {
       notificationsKey(userId),
       JSON.stringify(notifications),
     );
+  },
+
+  // Backward-compat alias — prefer create() for new code
+  addNotification: (
+    userId: string,
+    notification: Omit<Notification, "notificationId" | "createdAt" | "read">,
+  ): void => {
+    notificationService.create(userId, notification);
   },
 
   getUnreadCount: (userId: string): number => {

@@ -2,6 +2,7 @@
 
 import type { PassportApplication, EnrichedApplication } from "./applicationService";
 import { getIdentityForUser } from "./applicationService";
+import { notificationService } from "./notificationService";
 
 export interface MukhtarQueueItem {
   applicationId: string;
@@ -98,14 +99,31 @@ export const mukhtarService = {
     // Persist signature separately for officer dashboard lookup
     localStorage.setItem(signatureKey(applicationId), JSON.stringify(signature));
 
-    updateApplicationInStorage(applicationId, (app) => ({
-      ...app,
-      currentStatus: "MUKHTAR_SIGNED",
-      statusHistory: [
-        ...(app.statusHistory ?? []),
-        { status: "MUKHTAR_SIGNED" as const, timestamp: signature.timestamp },
-      ],
-    }));
+    let citizenUserId: string | null = null;
+    let trackingNumber = "";
+    updateApplicationInStorage(applicationId, (app) => {
+      citizenUserId = app.userId;
+      trackingNumber = app.trackingNumber;
+      return {
+        ...app,
+        currentStatus: "MUKHTAR_SIGNED",
+        statusHistory: [
+          ...(app.statusHistory ?? []),
+          { status: "MUKHTAR_SIGNED" as const, timestamp: signature.timestamp },
+        ],
+      };
+    });
+
+    // TODO: Remove when backend is connected — server creates this notification
+    if (citizenUserId) {
+      notificationService.create(citizenUserId, {
+        userId: citizenUserId,
+        type: "STATUS_UPDATE",
+        title: "Mukhtar Signed",
+        message: `Your application ${trackingNumber} has been signed by the mukhtar and forwarded for processing.`,
+        applicationId,
+      });
+    }
   },
 
   // FR-16 — Request document resubmission (rejection from mukhtar queue)
@@ -115,14 +133,31 @@ export const mukhtarService = {
     applicationId: string,
   ): Promise<void> => {
     const timestamp = new Date().toISOString();
-    updateApplicationInStorage(applicationId, (app) => ({
-      ...app,
-      currentStatus: "RESUBMISSION_REQUIRED",
-      statusHistory: [
-        ...(app.statusHistory ?? []),
-        { status: "RESUBMISSION_REQUIRED" as const, timestamp },
-      ],
-    }));
+    let citizenUserId: string | null = null;
+    let trackingNumber = "";
+    updateApplicationInStorage(applicationId, (app) => {
+      citizenUserId = app.userId;
+      trackingNumber = app.trackingNumber;
+      return {
+        ...app,
+        currentStatus: "RESUBMISSION_REQUIRED",
+        statusHistory: [
+          ...(app.statusHistory ?? []),
+          { status: "RESUBMISSION_REQUIRED" as const, timestamp },
+        ],
+      };
+    });
+
+    // TODO: Remove when backend is connected — server creates this notification
+    if (citizenUserId) {
+      notificationService.create(citizenUserId, {
+        userId: citizenUserId,
+        type: "RESUBMISSION_REQUIRED",
+        title: "Resubmission Required",
+        message: `Action required on application ${trackingNumber}: documents need to be resubmitted.`,
+        applicationId,
+      });
+    }
   },
 
   // Retrieve stored mukhtar signature for a given application

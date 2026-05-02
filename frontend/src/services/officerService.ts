@@ -3,6 +3,7 @@
 import type { PassportApplication, EnrichedApplication } from "./applicationService";
 import { getIdentityForUser } from "./applicationService";
 import { mukhtarService } from "./mukhtarService";
+import { notificationService } from "./notificationService";
 
 const scanApplicationsByStatus = (
   status: string,
@@ -74,14 +75,31 @@ export const officerService = {
     applicationId: string,
   ): Promise<void> => {
     const timestamp = new Date().toISOString();
-    updateApplicationInStorage(applicationId, (app) => ({
-      ...app,
-      currentStatus: "PROCESSED",
-      statusHistory: [
-        ...(app.statusHistory ?? []),
-        { status: "PROCESSED" as const, timestamp },
-      ],
-    }));
+    let citizenUserId: string | null = null;
+    let trackingNumber = "";
+    updateApplicationInStorage(applicationId, (app) => {
+      citizenUserId = app.userId;
+      trackingNumber = app.trackingNumber;
+      return {
+        ...app,
+        currentStatus: "PROCESSED",
+        statusHistory: [
+          ...(app.statusHistory ?? []),
+          { status: "PROCESSED" as const, timestamp },
+        ],
+      };
+    });
+
+    // TODO: Remove when backend is connected — server creates this notification
+    if (citizenUserId) {
+      notificationService.create(citizenUserId, {
+        userId: citizenUserId,
+        type: "STATUS_UPDATE",
+        title: "Application Processed",
+        message: `Your passport application ${trackingNumber} has been approved and is being processed for delivery.`,
+        applicationId,
+      });
+    }
   },
 
   // FR-19 — Record old passport cancellation before issuing a renewal

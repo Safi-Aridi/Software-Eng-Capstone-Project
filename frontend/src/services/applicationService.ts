@@ -1,3 +1,5 @@
+import { notificationService } from "./notificationService";
+
 export type ApplicationType = "NEW" | "RENEWAL";
 
 export type ApplicationStatus =
@@ -124,6 +126,14 @@ export const applicationService = {
         ],
       };
       localStorage.setItem(applicationsKey(userId), JSON.stringify(apps));
+      // TODO: Remove when backend is connected — server creates this notification
+      notificationService.create(userId, {
+        userId,
+        type: "STATUS_UPDATE",
+        title: "Documents Resubmitted",
+        message: `Your resubmitted documents for application ${apps[idx].trackingNumber} are now under review.`,
+        applicationId,
+      });
     }
   },
 
