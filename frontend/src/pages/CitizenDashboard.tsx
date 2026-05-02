@@ -10,6 +10,7 @@ import { paymentService } from "../services/paymentService";
 import AccountLockedPanel from "../components/kyc/AccountLockedPanel";
 import IdentityVerificationPendingPanel from "../components/kyc/IdentityVerificationPendingPanel";
 import IdentityVerificationRejectedPanel from "../components/kyc/IdentityVerificationRejectedPanel";
+import NotificationCenter from "../components/NotificationCenter";
 
 const CitizenDashboard = () => {
   const navigate = useNavigate();
@@ -274,12 +275,15 @@ const AcceptedDashboard = () => {
                 passport.
               </p>
             </div>
-            <button
-              onClick={handleLogout}
-              className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 transition-colors"
-            >
-              Logout
-            </button>
+            <div className="flex items-center gap-2">
+              {userId && <NotificationCenter userId={userId} />}
+              <button
+                onClick={handleLogout}
+                className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 transition-colors"
+              >
+                Logout
+              </button>
+            </div>
           </div>
         </div>
 

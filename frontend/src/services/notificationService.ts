@@ -4,8 +4,9 @@ export interface Notification {
   notificationId: string;
   userId: string;
   type: "RESUBMISSION_REQUIRED" | "STATUS_UPDATE" | "DELIVERY";
+  title?: string;
   message: string;
-  applicationId: string;
+  applicationId?: string;
   read: boolean;
   createdAt: string;
 }
@@ -37,6 +38,13 @@ export const notificationService = {
         JSON.stringify(notifications),
       );
     }
+  },
+
+  // TODO: PUT /api/notifications/read-all
+  markAllAsRead: (userId: string): void => {
+    const notifications = notificationService.getNotifications(userId);
+    const updated = notifications.map((n) => ({ ...n, read: true }));
+    localStorage.setItem(notificationsKey(userId), JSON.stringify(updated));
   },
 
   // Called internally when application status changes (FR-23, FR-32)
