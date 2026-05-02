@@ -1,32 +1,123 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { authService } from "../services/authService";
+
+const formatCountdown = (ms: number): string => {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+};
+
+const LockedPanel = ({
+  userId,
+  onUnlock,
+}: {
+  userId: string;
+  onUnlock: () => void;
+}) => {
+  const [remaining, setRemaining] = useState(() =>
+    authService.getRemainingLockTime(userId),
+  );
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      const next = authService.getRemainingLockTime(userId);
+      setRemaining(next);
+      if (next <= 0) {
+        window.clearInterval(interval);
+        authService.unlockAccount(userId);
+        onUnlock();
+      }
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [userId, onUnlock]);
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center px-4">
+      <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-8 text-center">
+        <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+          <svg
+            className="w-8 h-8 text-red-600"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+            />
+          </svg>
+        </div>
+        <h1 className="text-2xl font-bold text-gray-800 mb-2">
+          Your account is locked
+        </h1>
+        <p className="text-gray-600 mb-6">
+          Too many failed attempts. Your account has been locked.
+        </p>
+        <div className="bg-red-50 border border-red-200 rounded-md p-4 mb-6">
+          <p className="text-sm text-red-700 mb-1">Try again in</p>
+          <p
+            className="text-3xl font-mono font-bold text-red-700 tabular-nums"
+            aria-live="polite"
+          >
+            {formatCountdown(remaining)}
+          </p>
+        </div>
+        <p className="text-xs text-gray-500">
+          The login form will reappear automatically when the timer reaches
+          0:00.
+        </p>
+      </div>
+    </div>
+  );
+};
 
 const CitizenLoginPage = () => {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [lockedUserId, setLockedUserId] = useState<string | null>(() =>
+    authService.getPendingLockUserId(),
+  );
   const navigate = useNavigate();
+
+  useEffect(() => {
+    setLockedUserId(authService.getPendingLockUserId());
+  }, []);
+
+  const handleUnlock = () => {
+    setLockedUserId(null);
+    setError("");
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setIsLoading(true);
 
-    try {
-      if (!identifier || !password) {
-        throw new Error("Mobile number/email and password are required");
-      }
+    // Brief delay so the loading state is visible — login is otherwise synchronous
+    await new Promise((r) => setTimeout(r, 250));
 
-      await authService.login(identifier, password);
+    const result = await authService.login(identifier, password);
+
+    if (result.isLocked && result.lockedUserId) {
+      setLockedUserId(result.lockedUserId);
+    } else if (!result.success) {
+      setError(result.message);
+    } else {
       navigate("/citizen/dashboard");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
-    } finally {
-      setIsLoading(false);
     }
+
+    setIsLoading(false);
   };
+
+  if (lockedUserId) {
+    return <LockedPanel userId={lockedUserId} onUnlock={handleUnlock} />;
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center px-4">

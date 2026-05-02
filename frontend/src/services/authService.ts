@@ -14,6 +14,20 @@ export interface StoredUser {
   password: string;
   fullName: string;
   mobileNumber: string;
+  // FR-05.1 — single source of truth for failed-attempt + lock state
+  failedLoginAttempts?: number;
+  isLocked?: boolean;
+  lockedAt?: number | null;
+}
+
+export interface LoginResult {
+  success: boolean;
+  message: string;
+  failedAttempts: number;
+  remainingAttempts: number;
+  isLocked: boolean;
+  lockedUserId?: string;
+  user?: MockUser;
 }
 
 export interface MockUser {
@@ -40,6 +54,10 @@ export interface AuthorizedStoredUser {
 const SESSION_KEY = "npis_user";
 const USERS_KEY = "npis_users";
 const AUTHORIZED_USERS_KEY = "npis_authorized_users";
+
+// FR-05.1 — account lockout after 3 failed login attempts; auto-unlock after 15 minutes
+const LOCK_DURATION_MS = 15 * 60 * 1000;
+const MAX_LOGIN_ATTEMPTS = 3;
 
 const OTP_TTL_MS = 5 * 60 * 1000;
 const OTP_MAX_ATTEMPTS = 3;
@@ -104,10 +122,31 @@ const getUsers = (): StoredUser[] => {
   }
 };
 
+// Persists a single mutated user back into the npis_users array.
+// All lock/failed-attempt state lives on the user record itself, so this
+// is the single write path for that state.
+const writeUser = (updated: StoredUser): void => {
+  const users = getUsers();
+  const idx = users.findIndex((u) => u.userId === updated.userId);
+  if (idx < 0) return;
+  users[idx] = updated;
+  localStorage.setItem(USERS_KEY, JSON.stringify(users));
+};
+
+// Returns true if the user's lock has expired (15 minutes since lockedAt).
+// Pure check — does not mutate.
+const lockHasExpired = (user: StoredUser): boolean => {
+  if (!user.isLocked || !user.lockedAt) return false;
+  return Date.now() - user.lockedAt >= LOCK_DURATION_MS;
+};
+
 export const authService = {
   // FR-02 — Citizen login
   // TODO: return apiClient.post('/auth/login', { identifier, password });
-  login: async (identifier: string, password: string): Promise<MockUser> => {
+  login: async (
+    identifier: string,
+    password: string,
+  ): Promise<LoginResult> => {
     return authService.loginCitizen(identifier, password);
   },
 
@@ -138,26 +177,89 @@ export const authService = {
     }
   },
 
-  loginCitizen: (identifier: string, password: string): MockUser => {
+  loginCitizen: (identifier: string, password: string): LoginResult => {
     if (!identifier || !password) {
-      throw new Error("Mobile number/email and password are required");
+      return {
+        success: false,
+        message: "Mobile number/email and password are required",
+        failedAttempts: 0,
+        remainingAttempts: MAX_LOGIN_ATTEMPTS,
+        isLocked: false,
+      };
     }
 
     const users = getUsers();
-    const found = users.find(
-      (u) =>
-        (u.email === identifier || u.mobileNumber === identifier) &&
-        u.password === password,
+    const matched = users.find(
+      (u) => u.email === identifier || u.mobileNumber === identifier,
     );
 
-    if (!found) {
-      throw new Error(
-        "Invalid credentials. Please check your mobile number/email and password.",
-      );
+    if (!matched) {
+      return {
+        success: false,
+        message:
+          "Invalid credentials. Please check your mobile number/email and password.",
+        failedAttempts: 0,
+        remainingAttempts: MAX_LOGIN_ATTEMPTS,
+        isLocked: false,
+      };
     }
 
+    // FR-05.1 — auto-unlock if the 15-minute window has elapsed
+    if (matched.isLocked && lockHasExpired(matched)) {
+      matched.isLocked = false;
+      matched.lockedAt = null;
+      matched.failedLoginAttempts = 0;
+      writeUser(matched);
+    }
+
+    // FR-05.1 — short-circuit if still locked, regardless of password
+    if (matched.isLocked) {
+      return {
+        success: false,
+        message: "Your account is locked.",
+        failedAttempts: matched.failedLoginAttempts ?? MAX_LOGIN_ATTEMPTS,
+        remainingAttempts: 0,
+        isLocked: true,
+        lockedUserId: matched.userId,
+      };
+    }
+
+    if (matched.password !== password) {
+      const next = (matched.failedLoginAttempts ?? 0) + 1;
+      matched.failedLoginAttempts = next;
+      if (next >= MAX_LOGIN_ATTEMPTS) {
+        matched.isLocked = true;
+        matched.lockedAt = Date.now();
+      }
+      writeUser(matched);
+
+      if (matched.isLocked) {
+        return {
+          success: false,
+          message: "Too many failed attempts. Your account has been locked.",
+          failedAttempts: next,
+          remainingAttempts: 0,
+          isLocked: true,
+          lockedUserId: matched.userId,
+        };
+      }
+      const remaining = MAX_LOGIN_ATTEMPTS - next;
+      return {
+        success: false,
+        message: `Invalid credentials. ${remaining} attempt${remaining === 1 ? "" : "s"} remaining before your account is locked.`,
+        failedAttempts: next,
+        remainingAttempts: remaining,
+        isLocked: false,
+      };
+    }
+
+    // Success — reset failed-attempt counter on the user record
+    matched.failedLoginAttempts = 0;
+    matched.lockedAt = null;
+    writeUser(matched);
+
     const rawStatus =
-      localStorage.getItem(kycStatusKey(found.userId)) ||
+      localStorage.getItem(kycStatusKey(matched.userId)) ||
       "NO_IDENTITY_VERIFICATION";
     const accountStatus = resolveAccountStatus(rawStatus);
 
@@ -166,15 +268,22 @@ export const authService = {
       role: "citizen",
       accountStatus,
       user: {
-        id: found.userId,
-        fullName: found.fullName,
-        mobileNumber: found.mobileNumber,
-        email: found.email,
+        id: matched.userId,
+        fullName: matched.fullName,
+        mobileNumber: matched.mobileNumber,
+        email: matched.email,
       },
     };
 
     localStorage.setItem(SESSION_KEY, JSON.stringify(mockUser));
-    return mockUser;
+    return {
+      success: true,
+      message: "Login successful",
+      failedAttempts: 0,
+      remainingAttempts: MAX_LOGIN_ATTEMPTS,
+      isLocked: false,
+      user: mockUser,
+    };
   },
 
   registerCitizen: (data: {
@@ -385,5 +494,63 @@ export const authService = {
 
   clearOtp: (mobile: string): void => {
     localStorage.removeItem(otpKey(mobile));
+  },
+
+  // FR-05.1 — Lock the account on the user record itself
+  // TODO: POST /api/auth/lock — backend will own the lock state
+  lockAccount: (userId: string): void => {
+    const user = getUsers().find((u) => u.userId === userId);
+    if (!user) return;
+    user.isLocked = true;
+    user.lockedAt = Date.now();
+    user.failedLoginAttempts = MAX_LOGIN_ATTEMPTS;
+    writeUser(user);
+  },
+
+  // True if user.isLocked is set and the 15-minute window has not yet elapsed.
+  // Auto-unlocks on read only when an existing lock has expired — never
+  // touches counters for users that aren't locked.
+  isAccountLocked: (userId: string): boolean => {
+    const user = getUsers().find((u) => u.userId === userId);
+    if (!user || !user.isLocked) return false;
+    if (lockHasExpired(user)) {
+      authService.unlockAccount(userId);
+      return false;
+    }
+    return true;
+  },
+
+  // FR-05.1 — Returns remaining lock time in milliseconds, or 0 if not locked
+  getRemainingLockTime: (userId: string): number => {
+    const user = getUsers().find((u) => u.userId === userId);
+    if (!user || !user.isLocked || !user.lockedAt) return 0;
+    const remaining = LOCK_DURATION_MS - (Date.now() - user.lockedAt);
+    return remaining > 0 ? remaining : 0;
+  },
+
+  unlockAccount: (userId: string): void => {
+    const user = getUsers().find((u) => u.userId === userId);
+    if (!user) return;
+    user.isLocked = false;
+    user.lockedAt = null;
+    user.failedLoginAttempts = 0;
+    writeUser(user);
+  },
+
+  getFailedLoginAttempts: (userId: string): number => {
+    const user = getUsers().find((u) => u.userId === userId);
+    return user?.failedLoginAttempts ?? 0;
+  },
+
+  // Returns the userId of any account currently locked. Used by the login
+  // page to re-render the countdown panel after a refresh.
+  getPendingLockUserId: (): string | null => {
+    const locked = getUsers().find((u) => u.isLocked);
+    if (!locked) return null;
+    if (lockHasExpired(locked)) {
+      authService.unlockAccount(locked.userId);
+      return null;
+    }
+    return locked.userId;
   },
 };
