@@ -319,7 +319,7 @@ const AcceptedDashboard = () => {
               My Applications
             </h2>
             <button
-              onClick={() => navigate("/application/new")}
+              onClick={() => navigate("/application/checklist")}
               className="bg-blue-600 text-white px-5 py-2 rounded-md hover:bg-blue-700 transition-colors text-sm font-medium"
             >
               Apply for Passport

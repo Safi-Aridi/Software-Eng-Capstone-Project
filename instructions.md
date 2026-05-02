@@ -1,16 +1,25 @@
-Fix the lock functionality and implement the account lockout countdown screen for the NPIS citizen login.
+Add a pre-application checklist interstitial screen to the NPIS passport application flow.
 
-Context: `authService.ts` must lock the account after 3 consecutive failed login attempts and stores lock state in localStorage. FR-05.1 requires a 15-minute auto-unlock.
+Context: The application form starts at `/application/new` with `NewPassportApplicationPage.tsx`. Citizens currently jump straight into the multi-step form.
 
 Tasks:
-1. Fix the lock functionality in `authService.ts` to properly track failed login attempts and lock the account after 3 failed attempts.
-2. In `CitizenLoginPage.tsx`, after a failed login that triggers a lock, replace the login form with a "Your account is locked" panel showing:
-   - A lock icon
-   - Message: "Too many failed attempts. Your account has been locked."
-   - A live countdown timer: "Try again in MM:SS" that counts down from 15:00
-   - When the timer reaches 0:00, the panel automatically switches back to the login form and the lock is cleared in localStorage.
-3. If the user refreshes the page while locked, calculate the remaining lock time from the stored `lockedAt` timestamp and show the correct remaining time.
-4. Add `lockAccount(userId)`, `isAccountLocked(userId)`, and `getRemainingLockTime(userId)` to `authService.ts`. Lock duration = 15 minutes. Store `lockedAt` timestamp in localStorage.
-5. On login attempt: check `isAccountLocked` first — if locked, show the countdown panel immediately without processing credentials.
+1. Create a new page `src/pages/PreApplicationChecklistPage.tsx` at route `/application/checklist`.
+2. The page shows two tabs or toggle sections: "New Passport" and "Passport Renewal".
+3. For each type, display a checklist of required documents with acceptance criteria:
 
-Style: Match existing Tailwind CSS design of CitizenLoginPage.
+   New Passport:
+   - Lebanese National ID Card OR Civil Registry Extract (issued < 3 months ago, QR code scannable)
+   - Passport Photo (3.5 x 4.5 cm, white background, clear facial visibility)
+   - Device with front-facing camera (for biometric capture)
+
+   Passport Renewal:
+   - Lebanese National ID Card OR Civil Registry Extract (issued < 3 months ago)
+   - Passport Photo (3.5 x 4.5 cm, white background, clear facial visibility)
+   - Old Passport (legible MRZ, not reported lost/stolen)
+
+4. Each checklist item has a checkbox the user can tick. The "I'm Ready — Start Application" button is disabled until all items are checked.
+5. On clicking "I'm Ready", navigate to `/application/new`.
+6. Update `CitizenDashboard.tsx`: the "Apply for Passport" button should now navigate to `/application/checklist` instead of `/application/new`.
+7. Add route `/application/checklist` to `App.tsx` (protected, citizen only).
+
+Style: Match existing Tailwind CSS dashboard design. Make it feel informative and reassuring, not bureaucratic.
