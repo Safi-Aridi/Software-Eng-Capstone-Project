@@ -1,11 +1,35 @@
-Add an explicit fee acknowledgment checkbox to Step 6 (Review & Submit) of the passport application form.
+Update the file `ProjectSummary.md` to add a new Session 8 section documenting all the work done in this session. Follow the exact same format as previous sessions.
 
-Context: `NewPassportApplicationPage.tsx` Step 6 already shows the fee amount. The citizen currently submits without explicitly confirming.
+Session 8 — Citizen Portal Completion (Priority 1)
 
-Tasks:
-1. In Step 6 of `NewPassportApplicationPage.tsx`, add a checkbox directly above the "Submit Application" button with label:
-   "I acknowledge that I am required to pay [fee amount in LBP] to complete this application. I understand that failure to complete payment within 15 minutes will result in the application being cancelled."
-2. The "Submit Application" button is disabled until this checkbox is checked.
-3. The checkbox state resets if the user navigates back to a previous step.
+SRS Requirements Covered:
+- FR-05.1: Account lockout countdown UI
+- FR-09: Fee acknowledgment checkbox
+- FR-22: Resubmission guidance with per-document rejection reasons
+- FR-23, FR-32: Notification Center UI
+- NFR-USA-02, NFR-USA-03: Usability improvements
 
-This is a small but required change per FR-09 and UX requirements.
+Files Created:
+- `src/pages/PreApplicationChecklistPage.tsx` — pre-application document checklist
+- `src/pages/CitizenProfilePage.tsx` — citizen profile view and edit
+
+Files Modified:
+- `CitizenDashboard.tsx` — notification bell with badge, profile link, application filter/sort toolbar, "Apply" routes to checklist
+- `CitizenLoginPage.tsx` — account lockout countdown panel
+- `authService.ts` — lockAccount, isAccountLocked, getRemainingLockTime
+- `notificationService.ts` — markAsRead, markAllAsRead, getUnreadCount
+- `DocumentResubmissionPage.tsx` — rejection reasons, acceptance criteria, accepted-field indicators
+- `applicationService.ts` — added resubmissionReasons field to PassportApplication interface
+- `NewPassportApplicationPage.tsx` — fee acknowledgment checkbox on Step 6
+- `DevStatusPanel.tsx` — seeds mock resubmissionReasons when setting RESUBMISSION_REQUIRED
+- `App.tsx` — added /application/checklist and /citizen/profile routes
+
+Routes Added:
+| Route | Component |
+|---|---|
+| `/application/checklist` | PreApplicationChecklistPage (protected, citizen) |
+| `/citizen/profile` | CitizenProfilePage (protected, citizen) |
+
+Also update the "What's Complete" and "What's Not Yet Built" sections and update the "Next Steps" section to reflect that Priority 1 is now done and Priority 2 (Mukhtar Dashboard Fix) is next.
+
+Last updated line should read: Session 8 — Citizen Portal Completion

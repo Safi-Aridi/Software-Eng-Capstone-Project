@@ -490,21 +490,75 @@ Decouple all components from direct localStorage access. All data access now goe
 
 ---
 
+## Session 8 — Citizen Portal Completion (Priority 1)
+
+### SRS Requirements Covered:
+
+- FR-05.1: Account lockout countdown UI
+- FR-09: Fee acknowledgment checkbox
+- FR-22: Resubmission guidance with per-document rejection reasons
+- FR-23, FR-32: Notification Center UI
+- NFR-USA-02, NFR-USA-03: Usability improvements
+
+### Files Created:
+
+- `src/pages/PreApplicationChecklistPage.tsx` — pre-application document checklist
+- `src/pages/CitizenProfilePage.tsx` — citizen profile view and edit
+
+### Files Modified:
+
+- `CitizenDashboard.tsx` — notification bell with badge, profile link, application filter/sort toolbar, "Apply" routes to checklist
+- `CitizenLoginPage.tsx` — account lockout countdown panel
+- `authService.ts` — lockAccount, isAccountLocked, getRemainingLockTime
+- `notificationService.ts` — markAsRead, markAllAsRead, getUnreadCount
+- `DocumentResubmissionPage.tsx` — rejection reasons, acceptance criteria, accepted-field indicators
+- `applicationService.ts` — added resubmissionReasons field to PassportApplication interface
+- `NewPassportApplicationPage.tsx` — fee acknowledgment checkbox on Step 6
+- `DevStatusPanel.tsx` — seeds mock resubmissionReasons when setting RESUBMISSION_REQUIRED
+- `App.tsx` — added /application/checklist and /citizen/profile routes
+
+### Routes Added:
+
+| Route                    | Component                                        |
+| ------------------------ | ------------------------------------------------ |
+| `/application/checklist` | PreApplicationChecklistPage (protected, citizen) |
+| `/citizen/profile`       | CitizenProfilePage (protected, citizen)          |
+
+### Citizen Portal Features Completed:
+
+- Notification bell added to the Citizen Dashboard header with unread badge support
+- Notification Center UI added with read/unread state handling
+- Profile link added from the dashboard to the citizen profile page
+- Citizen profile page added for viewing and editing citizen contact/profile information
+- Application dashboard improved with status filtering and date sorting
+- "Apply" action now routes through the pre-application checklist before the application form
+- Login lockout state now displays a countdown panel showing when the citizen can retry
+- Document resubmission page now shows per-document rejection reasons and acceptance criteria
+- Accepted documents are visually indicated so the citizen knows which fields do not need correction
+- Step 6 of the application form now requires explicit fee acknowledgment before submission
+- Dev Status Panel now seeds mock rejection reasons when setting an application to `RESUBMISSION_REQUIRED`
+
 ## Current Application Status Summary
 
 ### What's Complete:
 
 - ✅ Citizen signup with OTP mobile validation UI (mock SMS)
 - ✅ Citizen login and logout
+- ✅ Account lockout countdown UI
 - ✅ Identity verification (KYC) flow — pending, accepted, rejected, resubmission
 - ✅ Role-based routing and protected routes
+- ✅ Citizen profile page — view and edit profile/contact information
+- ✅ Pre-application document checklist before starting application
 - ✅ Multi-step passport application form — 6 steps (NEW) / 5 steps (RENEWAL)
+- ✅ Fee acknowledgment checkbox on Step 6
 - ✅ Document upload with drag-and-drop, preview, validation
 - ✅ Biometric capture UI — manual trigger, ML feedback simulation, 3-second stability timer, face + fingerprints
 - ✅ Payment flow — dedicated PaymentPage, CashPlus simulation (success/fail/unavailable), FR-30 timeout auto-fail
 - ✅ Application status timeline with estimated completion
-- ✅ Document resubmission flow
+- ✅ Document resubmission flow with per-document rejection reasons and acceptance criteria
 - ✅ Notification banners for action-required applications (resubmission, payment)
+- ✅ Notification Center UI — bell badge, read/unread state, mark as read, mark all as read
+- ✅ Application filtering/sorting on CitizenDashboard
 - ✅ Mukhtar Dashboard — pending queue, detail drawer, e-signature, resubmission trigger
 - ✅ GS Officer Dashboard — approval queue, final approval, old passport cancellation
 - ✅ AI assistant floating chat widget (Anthropic API)
@@ -512,18 +566,13 @@ Decouple all components from direct localStorage access. All data access now goe
 - ✅ Full API service layer with mock implementations and TODO markers
 - ✅ Test data seeding for all user/application/payment states
 - ✅ Routing fixed — reload, back button, no unload violations
+- ✅ Priority 1 Citizen Portal Completion is done
 
 ### What's Not Yet Built:
 
-- ⬜ Notification Center UI — `notificationService.ts` stores notifications but no UI displays them (FR-23, FR-32)
-- ⬜ Account lockout countdown UI — lock logic exists in authService but no "locked — try again in X:XX" screen (FR-05.1)
-- ⬜ Document pre-application checklist — no "what you'll need" screen before starting the form (UX)
-- ⬜ Resubmission guidance — DocumentResubmissionPage shows upload fields but no rejection reason or per-document acceptance criteria (FR-22, UX)
-- ⬜ Citizen profile page — no screen to view name, mobile, email, registry number, date of birth (UX)
-- ⬜ Application receipt download — no printable/downloadable confirmation after submission (UX)
-- ⬜ Fee acknowledgment checkbox — Step 6 shows the fee but citizen doesn't explicitly confirm before submitting (FR-09, UX)
+- ⬜ Mukhtar Dashboard end-to-end verification/fix — queue loading, detail drawer, signing, and resubmission flow need full testing after citizen-side completion
+- ⬜ Application receipt download — no printable/downloadable confirmation after submission and payment (UX)
 - ⬜ Passport expiry reminder — no banner on dashboard when delivered passport nears expiry (UX)
-- ⬜ Application filtering/sorting on dashboard — flat list with no status filter or date sort (UX)
 - ⬜ ML document verification pipeline — automated status transitions FR-20 to FR-27 (deferred; Dev Panel bridges gap)
 - ⬜ LibanPost delivery integration — FR-31 to FR-33 (deferred)
 - ⬜ Real backend integration — replace all localStorage mocks with API calls through `apiClient.ts`, connect Supabase auth and database, wire ML pipeline
@@ -535,27 +584,21 @@ Decouple all components from direct localStorage access. All data access now goe
 
 ## Next Steps (Priority Order)
 
-### 1. Citizen Portal Completion — High Priority
+### 1. Mukhtar Dashboard Fix & Verification — High Priority
 
-Build the remaining citizen-facing screens:
-
-- **Notification Center**: bell icon in dashboard header, dropdown/page listing all notifications with read/unread state (FR-23, FR-32)
-- **Account Lockout UI**: "Your account is locked. Try again in X:XX" countdown screen with automatic unlock after 15 minutes (FR-05.1)
-- **Document Pre-Application Checklist**: interstitial screen before Step 1 of the form listing required documents with acceptance criteria (UX)
-- **Resubmission Guidance**: show per-document rejection reason on DocumentResubmissionPage with acceptance criteria inline (FR-22, UX)
-- **Citizen Profile Page**: `/citizen/profile` — view identity data, contact info; allow editing mobile/email (UX)
-- **Application Receipt Download**: generate and offer a downloadable PDF receipt after successful submission and payment (UX)
-- **Fee Acknowledgment Checkbox**: add explicit "I confirm I agree to pay X LBP" checkbox on Step 6 before submission (FR-09, UX)
-- **Passport Expiry Reminder**: banner on dashboard cards with status DELIVERED when expiry is within 6 months (UX)
-- **Application Filtering/Sorting**: filter by status and sort by date on CitizenDashboard (UX)
-
-### 2. Mukhtar Dashboard Fix & Verification — High Priority
+Priority 1 Citizen Portal Completion is now done. The next priority is to verify and fix the Mukhtar dashboard end-to-end:
 
 - Confirm login flow works end-to-end (mukhtar@test.com / test123 → `/mukhtar/dashboard`)
 - Verify VERIFIED applications appear in the queue
 - Test approve & sign flow → status transitions to MUKHTAR_SIGNED
-- Test resubmission trigger
-- Use Dev Status Panel to seed VERIFIED applications for testing
+- Test resubmission trigger → status transitions to RESUBMISSION_REQUIRED with seeded rejection reasons
+- Confirm citizen receives/reads the generated notification after Mukhtar action
+- Use Dev Status Panel to seed VERIFIED and RESUBMISSION_REQUIRED applications for testing
+
+### 2. Remaining Citizen UX Enhancements — Medium Priority
+
+- **Application Receipt Download**: generate and offer a downloadable PDF receipt after successful submission and payment (UX)
+- **Passport Expiry Reminder**: banner on dashboard cards with status DELIVERED when expiry is within 6 months (UX)
 
 ### 3. Real Backend Integration — When Team API Stabilizes
 
@@ -692,4 +735,4 @@ Each step should keep the rest of the app working in mock mode via a feature fla
 
 ---
 
-_Last updated: Session 7 — OTP UI, Biometric Capture, AI Assistant, Dev Status Panel_
+_Last updated: Session 8 — Citizen Portal Completion_
