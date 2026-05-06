@@ -9,6 +9,7 @@ import {
   paymentService,
   type PaymentOutcome,
 } from "../services/paymentService";
+import { receiptService } from "../services/receiptService";
 
 const PaymentPage = () => {
   const { applicationId } = useParams<{ applicationId: string }>();
@@ -21,8 +22,12 @@ const PaymentPage = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isPaying, setIsPaying] = useState(false);
   const [outcome, setOutcome] = useState<PaymentOutcome | null>(null);
-  const [countdown, setCountdown] = useState(3);
+  const [countdown, setCountdown] = useState(5);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [isGeneratingReceipt, setIsGeneratingReceipt] = useState(false);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
+  const [countdownPaused, setCountdownPaused] = useState(false);
+  const [receiptDownloaded, setReceiptDownloaded] = useState(false);
 
   // Load application on mount
   useEffect(() => {
@@ -51,9 +56,9 @@ const PaymentPage = () => {
       currentLocation.pathname !== nextLocation.pathname,
   );
 
-  // Success auto-redirect countdown
+  // Success auto-redirect countdown — pauses if the citizen clicks Download Receipt
   useEffect(() => {
-    if (outcome !== "SUCCESS") return;
+    if (outcome !== "SUCCESS" || countdownPaused) return;
     countdownRef.current = setInterval(() => {
       setCountdown((c) => {
         if (c <= 1) {
@@ -71,7 +76,7 @@ const PaymentPage = () => {
     return () => {
       if (countdownRef.current) clearInterval(countdownRef.current);
     };
-  }, [outcome]);
+  }, [outcome, countdownPaused]);
 
   const handlePay = async () => {
     if (!application || !currentUser) return;
@@ -89,6 +94,33 @@ const PaymentPage = () => {
       application.applicationId,
     );
     if (updated) setApplication(updated);
+  };
+
+  const handleDownloadReceipt = async () => {
+    if (!application) return;
+    // Pause the auto-redirect immediately so the user has full control
+    setCountdownPaused(true);
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    setIsGeneratingReceipt(true);
+    setReceiptError(null);
+    try {
+      await receiptService.generateReceipt(application.applicationId);
+      setReceiptDownloaded(true);
+    } catch {
+      setReceiptError("Receipt generation failed. Please try again.");
+      setTimeout(() => setReceiptError(null), 3000);
+    } finally {
+      setIsGeneratingReceipt(false);
+    }
+  };
+
+  const handleGoToDashboard = () => {
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    navigate("/citizen/dashboard", {
+      state: {
+        successMessage: `Payment successful! Your application ${application?.trackingNumber} is now being processed.`,
+      },
+    });
   };
 
   const handleRetry = () => {
@@ -231,10 +263,39 @@ const PaymentPage = () => {
             <p className="text-green-600 text-xs font-mono mb-4">
               {application.trackingNumber}
             </p>
-            <p className="text-green-600 text-sm">
-              Redirecting to dashboard in{" "}
-              <span className="font-bold">{countdown}</span>...
-            </p>
+            <button
+              onClick={handleDownloadReceipt}
+              disabled={isGeneratingReceipt}
+              className="w-full mb-3 border border-green-600 text-green-700 py-2.5 rounded-lg font-medium hover:bg-green-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {isGeneratingReceipt
+                ? "Generating..."
+                : receiptDownloaded
+                  ? "Download Receipt Again"
+                  : "Download Receipt"}
+            </button>
+            {receiptError && (
+              <p className="text-red-600 text-xs mb-2">{receiptError}</p>
+            )}
+            {countdownPaused ? (
+              <p className="text-green-700 text-sm mb-3">
+                {receiptDownloaded
+                  ? "Download complete. Continue when ready."
+                  : "Auto-redirect paused."}
+              </p>
+            ) : (
+              <p className="text-green-600 text-sm mb-3">
+                Redirecting to dashboard in{" "}
+                <span className="font-bold">{countdown}</span> second
+                {countdown === 1 ? "" : "s"}...
+              </p>
+            )}
+            <button
+              onClick={handleGoToDashboard}
+              className="w-full bg-green-600 text-white py-2.5 rounded-lg font-medium hover:bg-green-700 transition-colors"
+            >
+              Go to Dashboard
+            </button>
           </div>
         )}
 

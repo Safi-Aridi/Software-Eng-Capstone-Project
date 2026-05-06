@@ -84,11 +84,36 @@ const DevStatusPanel = () => {
     } else {
       updated.resubmissionReasons = undefined;
     }
+    if (status === "DELIVERED" && !updated.deliveredDate) {
+      updated.deliveredDate = new Date().toISOString();
+    }
     updateApplicationInStorage(updated);
     setApps((prev) =>
       prev.map((a) => (a.applicationId === selectedId ? updated : a)),
     );
     showFlash("✓ Updated");
+  };
+
+  const updateDeliveredDate = (isoDate: string) => {
+    if (!selected) return;
+    const updated: PassportApplication = {
+      ...selected,
+      deliveredDate: isoDate,
+      currentStatus: "DELIVERED",
+    };
+    // Clear info-tier dismissal so the banner re-evaluates against the new date
+    localStorage.removeItem(`expiry_banner_dismissed_${selected.applicationId}`);
+    updateApplicationInStorage(updated);
+    setApps((prev) =>
+      prev.map((a) => (a.applicationId === selectedId ? updated : a)),
+    );
+    showFlash("✓ Updated");
+  };
+
+  const setDeliveredOffset = (yearsAgo: number) => {
+    const now = Date.now();
+    const ts = new Date(now - yearsAgo * 365 * 24 * 60 * 60 * 1000).toISOString();
+    updateDeliveredDate(ts);
   };
 
   const updatePayment = (paymentStatus: "UNPAID" | "Paid" | "Failed") => {
@@ -184,6 +209,51 @@ const DevStatusPanel = () => {
                     </button>
                   );
                 })}
+              </div>
+            </div>
+
+            {/* Delivered date override (drives expiry banner) */}
+            <div>
+              <label className="block text-gray-400 mb-1">
+                Delivered Date (sets status DELIVERED)
+              </label>
+              <input
+                type="date"
+                value={
+                  selected.deliveredDate
+                    ? selected.deliveredDate.slice(0, 10)
+                    : ""
+                }
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  updateDeliveredDate(
+                    new Date(e.target.value).toISOString(),
+                  );
+                }}
+                className="w-full bg-gray-800 border border-gray-600 text-gray-100 rounded px-2 py-1 text-xs mb-1"
+              />
+              <div className="grid grid-cols-3 gap-1">
+                <button
+                  onClick={() => setDeliveredOffset(4.5)}
+                  className="px-1 py-1 rounded bg-blue-700 hover:bg-blue-600 text-xs"
+                  title="≈ 6 months until expiry (Info)"
+                >
+                  -4.5y (Info)
+                </button>
+                <button
+                  onClick={() => setDeliveredOffset(4 + 10 / 12)}
+                  className="px-1 py-1 rounded bg-amber-700 hover:bg-amber-600 text-xs"
+                  title="≈ 2 months until expiry (Warning)"
+                >
+                  -4y10m (Warn)
+                </button>
+                <button
+                  onClick={() => setDeliveredOffset(5 + 1 / 12)}
+                  className="px-1 py-1 rounded bg-red-700 hover:bg-red-600 text-xs"
+                  title="Already expired (Critical)"
+                >
+                  -5y1m (Exp)
+                </button>
               </div>
             </div>
 

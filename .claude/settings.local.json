@@ -7,7 +7,9 @@
       "PowerShell(npx --prefix frontend tsc --noEmit -p frontend/tsconfig.json 2>&1 | Select-Object -First 80)",
       "PowerShell(npx --prefix frontend tsc --noEmit -p frontend 2>&1 | Select-Object -First 80)",
       "Bash(npx tsc *)",
-      "Bash(echo \"EXIT=$?\")"
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(npm install *)",
+      "Bash(npx vite *)"
     ]
   },
   "spinnerTipsEnabled": true,

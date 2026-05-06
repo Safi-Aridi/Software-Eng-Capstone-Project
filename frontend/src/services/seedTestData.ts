@@ -316,6 +316,89 @@ const SEED_SIGNATURES: Record<string, object> = {
   },
 };
 
+// ─── Near-expiry DELIVERED apps for user_002 (built dynamically relative to today) ──
+
+const buildExpiryDemoApps = (): PassportApplication[] => {
+  const now = Date.now();
+  const yearMs = 1000 * 60 * 60 * 24 * 365;
+  const monthMs = 1000 * 60 * 60 * 24 * 30;
+
+  // Info-tier: ~6 months until expiry → 5y validity, delivered ~4y6m ago
+  const infoDelivered = new Date(now - (4.5 * yearMs)).toISOString();
+  // Warning-tier: ~2 months until expiry → 5y validity, delivered ~4y10m ago
+  const warningDelivered = new Date(now - (4 * yearMs + 10 * monthMs)).toISOString();
+  // Critical/Expired: already expired ~1 month ago → 5y validity, delivered ~5y1m ago
+  const expiredDelivered = new Date(now - (5 * yearMs + monthMs)).toISOString();
+
+  const baseDocs = {
+    identityDocument: "national_id.pdf",
+    passportPhoto: "photo.jpg",
+    oldPassport: null,
+  };
+  const baseMukhtarForm = {
+    address: "12 Hamra Street, Beirut",
+    district: "Beirut",
+    mukhtarName: "Khalil Raad",
+  };
+
+  return [
+    {
+      applicationId: "app_seed_002_expiry_info",
+      userId: "user_002",
+      applicationType: "NEW",
+      currentStatus: "DELIVERED",
+      submissionDate: new Date(now - (4.5 * yearMs + monthMs)).toISOString(),
+      trackingNumber: "NPIS-2021-700001",
+      passportValidity: 5,
+      feeAmount: 200_000,
+      paymentStatus: "Paid",
+      documents: baseDocs,
+      mukhtarFormData: baseMukhtarForm,
+      biometricCaptured: true,
+      deliveredDate: infoDelivered,
+      statusHistory: [
+        { status: "DELIVERED", timestamp: infoDelivered },
+      ],
+    },
+    {
+      applicationId: "app_seed_002_expiry_warning",
+      userId: "user_002",
+      applicationType: "NEW",
+      currentStatus: "DELIVERED",
+      submissionDate: new Date(now - (4 * yearMs + 11 * monthMs)).toISOString(),
+      trackingNumber: "NPIS-2021-700002",
+      passportValidity: 5,
+      feeAmount: 200_000,
+      paymentStatus: "Paid",
+      documents: baseDocs,
+      mukhtarFormData: baseMukhtarForm,
+      biometricCaptured: true,
+      deliveredDate: warningDelivered,
+      statusHistory: [
+        { status: "DELIVERED", timestamp: warningDelivered },
+      ],
+    },
+    {
+      applicationId: "app_seed_002_expiry_expired",
+      userId: "user_002",
+      applicationType: "NEW",
+      currentStatus: "DELIVERED",
+      submissionDate: new Date(now - (5 * yearMs + 2 * monthMs)).toISOString(),
+      trackingNumber: "NPIS-2020-700003",
+      passportValidity: 5,
+      feeAmount: 200_000,
+      paymentStatus: "Paid",
+      documents: baseDocs,
+      mukhtarFormData: baseMukhtarForm,
+      biometricCaptured: true,
+      deliveredDate: expiredDelivered,
+      statusHistory: [
+        { status: "DELIVERED", timestamp: expiredDelivered },
+      ],
+    },
+  ];
+};
+
 // ─── UNPAID app — built dynamically so submissionDate is always 25 min in the past ──
 
 const buildUnpaidApp = (): PassportApplication => ({
@@ -411,7 +494,11 @@ export const seedTestDataIfNeeded = (): void => {
   }
 
   // Seed applications by ID — safe to call every load
-  ensureApplicationsExist("user_002", [...APPS_USER_002, buildUnpaidApp()]);
+  ensureApplicationsExist("user_002", [
+    ...APPS_USER_002,
+    buildUnpaidApp(),
+    ...buildExpiryDemoApps(),
+  ]);
   ensureApplicationsExist("user_001", APPS_USER_001);
 
   // Seed mukhtar signatures for pre-signed applications

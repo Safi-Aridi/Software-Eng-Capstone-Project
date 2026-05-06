@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { authService } from "../services/authService";
 import {
   applicationService,
@@ -53,10 +53,23 @@ const isValidPhoto = (f: File) => ALLOWED_PHOTO_EXTS.includes(getExt(f));
 
 const NewPassportApplicationPage = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const currentUser = authService.getCurrentUser();
 
-  const [step, setStep] = useState(1);
-  const [applicationType, setApplicationType] = useState<ApplicationType | null>(null);
+  // Pre-select application type from URL (set by checklist when entering from
+  // the expiry banner) — this also locks the form to step 2 and prevents the
+  // Back button from returning to the type-selection step.
+  const presetTypeParam = searchParams.get("type");
+  const presetType: ApplicationType | null =
+    presetTypeParam === "NEW" || presetTypeParam === "RENEWAL"
+      ? presetTypeParam
+      : null;
+  const typeLocked = presetType !== null;
+
+  const [step, setStep] = useState(typeLocked ? 2 : 1);
+  const [applicationType, setApplicationType] = useState<ApplicationType | null>(
+    presetType,
+  );
   const [passportValidity, setPassportValidity] = useState<ValidityYears | null>(null);
   const [documents, setDocuments] = useState<DocumentFiles>({
     identityDocument: null,
@@ -129,6 +142,12 @@ const NewPassportApplicationPage = () => {
     // Reset the fee acknowledgement so it must be re-confirmed if the user
     // returns to Step 6 — they may change values that affect the fee.
     setFeeAcknowledged(false);
+    // When the type was pre-selected via URL param, Step 1 is unreachable —
+    // Back from Step 2 returns to the checklist instead.
+    if (typeLocked && step === 2) {
+      navigate("/application/checklist");
+      return;
+    }
     // Renewal skips step 5 when going back from step 6
     if (applicationType === "RENEWAL" && step === 6) {
       setStep(4);

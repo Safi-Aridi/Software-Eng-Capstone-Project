@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 type ApplicationType = "NEW" | "RENEWAL";
 
@@ -52,7 +52,11 @@ const RENEWAL_ITEMS: ChecklistItem[] = [
 
 const PreApplicationChecklistPage = () => {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<ApplicationType>("NEW");
+  const [searchParams] = useSearchParams();
+  const presetType = searchParams.get("type");
+  const fromExpiry = searchParams.get("fromExpiry");
+  const initialTab: ApplicationType = presetType === "RENEWAL" ? "RENEWAL" : "NEW";
+  const [activeTab, setActiveTab] = useState<ApplicationType>(initialTab);
   // Independent checked state per tab so switching tabs doesn't lose progress
   const [checkedNew, setCheckedNew] = useState<Record<string, boolean>>({});
   const [checkedRenewal, setCheckedRenewal] = useState<Record<string, boolean>>(
@@ -194,7 +198,11 @@ const PreApplicationChecklistPage = () => {
 
             <button
               type="button"
-              onClick={() => navigate("/application/new")}
+              onClick={() => {
+                const params = new URLSearchParams({ type: activeTab });
+                if (fromExpiry) params.set("fromExpiry", fromExpiry);
+                navigate(`/application/new?${params.toString()}`);
+              }}
               disabled={!allChecked}
               className="mt-6 w-full bg-blue-600 text-white py-3 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors font-medium"
             >

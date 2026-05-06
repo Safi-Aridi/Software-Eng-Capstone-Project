@@ -5,8 +5,10 @@ import {
   applicationService,
   type PassportApplication,
   type ApplicationStatus,
+  type ExpiringPassport,
 } from "../services/applicationService";
 import { paymentService } from "../services/paymentService";
+import { receiptService } from "../services/receiptService";
 import AccountLockedPanel from "../components/kyc/AccountLockedPanel";
 import IdentityVerificationPendingPanel from "../components/kyc/IdentityVerificationPendingPanel";
 import IdentityVerificationRejectedPanel from "../components/kyc/IdentityVerificationRejectedPanel";
@@ -127,10 +129,29 @@ const StatusBadge = ({ status }: { status: ApplicationStatus }) => (
 
 // ─── Application Card ─────────────────────────────────────────────────────────
 
-const ApplicationCard = ({ app }: { app: PassportApplication }) => {
+const ApplicationCard = ({
+  app,
+  onReceiptError,
+}: {
+  app: PassportApplication;
+  onReceiptError: (msg: string) => void;
+}) => {
   const navigate = useNavigate();
   const isUnpaid = app.paymentStatus === "UNPAID";
   const isPaymentFailed = app.paymentStatus === "Failed";
+  const isPaid = app.paymentStatus === "Paid";
+  const [isGeneratingReceipt, setIsGeneratingReceipt] = useState(false);
+
+  const handleDownloadReceipt = async () => {
+    setIsGeneratingReceipt(true);
+    try {
+      await receiptService.generateReceipt(app.applicationId);
+    } catch {
+      onReceiptError("Receipt generation failed. Please try again.");
+    } finally {
+      setIsGeneratingReceipt(false);
+    }
+  };
 
   return (
     <div
@@ -201,6 +222,15 @@ const ApplicationCard = ({ app }: { app: PassportApplication }) => {
             >
               Track Application
             </button>
+            {isPaid && (
+              <button
+                onClick={handleDownloadReceipt}
+                disabled={isGeneratingReceipt}
+                className="text-xs text-gray-500 hover:text-gray-700 hover:underline disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isGeneratingReceipt ? "Generating..." : "Download Receipt"}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -225,6 +255,8 @@ const AcceptedDashboard = () => {
 
   // TODO: Replace localStorage read with GET /api/applications?role=citizen when backend is ready
   const [applications, setApplications] = useState<PassportApplication[]>([]);
+  const [expiringPassports, setExpiringPassports] = useState<ExpiringPassport[]>([]);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<"ALL" | ApplicationStatus>(
     "ALL",
   );
@@ -253,7 +285,20 @@ const AcceptedDashboard = () => {
       .then(() =>
         applicationService.getApplications(userId).then(setApplications),
       );
+    applicationService.getExpiringPassports(userId).then(setExpiringPassports);
   }, [userId]);
+
+  const handleReceiptError = (msg: string) => {
+    setReceiptError(msg);
+    setTimeout(() => setReceiptError(null), 3000);
+  };
+
+  const handleDismissExpiry = async (applicationId: string) => {
+    await applicationService.dismissExpiryBanner(applicationId, "info");
+    setExpiringPassports((prev) =>
+      prev.filter((e) => e.application.applicationId !== applicationId),
+    );
+  };
 
   const handleLogout = () => {
     authService.logout();
@@ -262,6 +307,25 @@ const AcceptedDashboard = () => {
 
   return (
     <div className="max-w-4xl mx-auto p-6">
+      {expiringPassports.map((e) => (
+        <ExpiryBanner
+          key={e.application.applicationId}
+          entry={e}
+          onDismiss={() => handleDismissExpiry(e.application.applicationId)}
+          onRenew={() =>
+            navigate(
+              `/application/checklist?type=RENEWAL&fromExpiry=${e.application.applicationId}`,
+            )
+          }
+        />
+      ))}
+
+      {receiptError && (
+        <div className="mb-5 p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">
+          {receiptError}
+        </div>
+      )}
+
       {successMessage && (
         <div className="mb-5 p-4 bg-green-50 border border-green-200 rounded-lg flex justify-between items-start">
           <div className="flex items-start">
@@ -446,13 +510,109 @@ const AcceptedDashboard = () => {
               ) : (
                 <div className="space-y-3">
                   {visibleApplications.map((app) => (
-                    <ApplicationCard key={app.applicationId} app={app} />
+                    <ApplicationCard
+                      key={app.applicationId}
+                      app={app}
+                      onReceiptError={handleReceiptError}
+                    />
                   ))}
                 </div>
               )}
             </>
           )}
         </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Expiry Reminder Banner ───────────────────────────────────────────────────
+
+const SEVERITY_STYLES = {
+  info: {
+    container: "bg-blue-50 border-blue-200 text-blue-900",
+    button: "bg-blue-600 hover:bg-blue-700 text-white",
+    label: "Info",
+  },
+  warning: {
+    container: "bg-amber-50 border-amber-300 text-amber-900",
+    button: "bg-amber-600 hover:bg-amber-700 text-white",
+    label: "Warning",
+  },
+  critical: {
+    container: "bg-red-50 border-red-300 text-red-900",
+    button: "bg-red-600 hover:bg-red-700 text-white",
+    label: "Critical",
+  },
+  expired: {
+    container: "bg-red-50 border-red-300 text-red-900",
+    button: "bg-red-600 hover:bg-red-700 text-white",
+    label: "Expired",
+  },
+} as const;
+
+const formatExpiryDate = (iso: string): string =>
+  new Date(iso).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+
+const buildExpiryMessage = (entry: ExpiringPassport): string => {
+  const { severity, daysUntilExpiry, expiryDate } = entry;
+  const dateStr = formatExpiryDate(expiryDate);
+  if (severity === "expired") {
+    return `Your passport expired on ${dateStr}. Renew immediately.`;
+  }
+  if (severity === "critical") {
+    return `Your passport expires in ${daysUntilExpiry} day${daysUntilExpiry === 1 ? "" : "s"} on ${dateStr}. Renew immediately.`;
+  }
+  if (severity === "warning") {
+    const months = Math.max(1, Math.round(daysUntilExpiry / 30));
+    return `Your passport expires in ${months} month${months === 1 ? "" : "s"} on ${dateStr}. Renew now to avoid travel disruption.`;
+  }
+  // info
+  const months = Math.max(1, Math.round(daysUntilExpiry / 30));
+  return `Your passport expires in ${months} months. Plan to renew soon.`;
+};
+
+const ExpiryBanner = ({
+  entry,
+  onDismiss,
+  onRenew,
+}: {
+  entry: ExpiringPassport;
+  onDismiss: () => void;
+  onRenew: () => void;
+}) => {
+  const styles = SEVERITY_STYLES[entry.severity];
+  const dismissible = entry.severity === "info";
+  return (
+    <div
+      className={`mb-3 p-4 border rounded-lg flex items-start justify-between gap-4 ${styles.container}`}
+    >
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium">{buildExpiryMessage(entry)}</p>
+        <p className="text-xs opacity-75 mt-1 font-mono">
+          {entry.application.trackingNumber}
+        </p>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <button
+          onClick={onRenew}
+          className={`text-xs px-4 py-2 rounded-md font-medium transition-colors ${styles.button}`}
+        >
+          Renew Now
+        </button>
+        {dismissible && (
+          <button
+            onClick={onDismiss}
+            aria-label="Dismiss"
+            className="text-xl leading-none opacity-60 hover:opacity-100 px-1"
+          >
+            ×
+          </button>
+        )}
       </div>
     </div>
   );
