@@ -114,24 +114,25 @@ export const mukhtarService = {
       };
     });
 
-    // TODO: Remove when backend is connected — server creates this notification
+    // TODO: Remove when backend is connected — NestJS handles notification creation server-side
     if (citizenUserId) {
       notificationService.create(citizenUserId, {
         userId: citizenUserId,
         type: "STATUS_UPDATE",
         title: "Mukhtar Signed",
-        message: `Your application ${trackingNumber} has been signed by the mukhtar and forwarded for processing.`,
+        message: `Your application ${trackingNumber} has been signed by your Mukhtar and is being processed by General Security.`,
         applicationId,
       });
     }
   },
 
-  // FR-16 — Request document resubmission (rejection from mukhtar queue)
+  // FR-16, FR-22 — Request document resubmission with per-document reasons
   // TODO: POST /api/mukhtar/applications/:id/reject
   rejectApplication: async (
     _mukhtarId: string,
     applicationId: string,
-  ): Promise<void> => {
+    resubmissionReasons?: PassportApplication["resubmissionReasons"],
+  ): Promise<{ success: boolean }> => {
     const timestamp = new Date().toISOString();
     let citizenUserId: string | null = null;
     let trackingNumber = "";
@@ -141,6 +142,7 @@ export const mukhtarService = {
       return {
         ...app,
         currentStatus: "RESUBMISSION_REQUIRED",
+        resubmissionReasons: resubmissionReasons ?? app.resubmissionReasons,
         statusHistory: [
           ...(app.statusHistory ?? []),
           { status: "RESUBMISSION_REQUIRED" as const, timestamp },
@@ -148,16 +150,30 @@ export const mukhtarService = {
       };
     });
 
-    // TODO: Remove when backend is connected — server creates this notification
+    // TODO: Remove when backend is connected — NestJS handles notification creation server-side
     if (citizenUserId) {
       notificationService.create(citizenUserId, {
         userId: citizenUserId,
         type: "RESUBMISSION_REQUIRED",
         title: "Resubmission Required",
-        message: `Action required on application ${trackingNumber}: documents need to be resubmitted.`,
+        message: `Action required: Your Mukhtar has requested document resubmission for application ${trackingNumber}.`,
         applicationId,
       });
     }
+    return { success: true };
+  },
+
+  // Alias for spec naming
+  requestResubmission: async (
+    mukhtarId: string,
+    applicationId: string,
+    resubmissionReasons: PassportApplication["resubmissionReasons"],
+  ): Promise<{ success: boolean }> => {
+    return mukhtarService.rejectApplication(
+      mukhtarId,
+      applicationId,
+      resubmissionReasons,
+    );
   },
 
   // Retrieve stored mukhtar signature for a given application

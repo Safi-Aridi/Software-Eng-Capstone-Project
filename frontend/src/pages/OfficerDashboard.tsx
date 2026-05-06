@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { authService } from "../services/authService";
 import { officerService } from "../services/officerService";
@@ -84,7 +84,9 @@ const QueueCard = ({
             {citizenIdentity?.fullName ?? "Unknown Citizen"}
           </p>
           <p className="text-sm text-gray-500 mt-0.5">
-            {app.applicationType === "NEW" ? "New Passport" : "Passport Renewal"}{" "}
+            {app.applicationType === "NEW"
+              ? "New Passport"
+              : "Passport Renewal"}{" "}
             &mdash; {app.mukhtarFormData.district}
           </p>
           <p className="text-xs text-gray-400 mt-1 font-mono">
@@ -112,74 +114,87 @@ const QueueCard = ({
   );
 };
 
+// ─── Dismissible Modal Wrapper ────────────────────────────────────────────────
+
+const ModalShell = ({
+  onDismiss,
+  children,
+}: {
+  onDismiss: () => void;
+  children: ReactNode;
+}) => {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onDismiss();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onDismiss]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      onClick={onDismiss}
+    >
+      <div onClick={(e) => e.stopPropagation()}>{children}</div>
+    </div>
+  );
+};
+
 // ─── Cancel Old Passport Modal (FR-19) ───────────────────────────────────────
 
 const CancelOldPassportModal = ({
   trackingNumber,
+  mrzReference,
   onConfirm,
-  onSkip,
+  onCancel,
   isProcessing,
-  cancelled,
 }: {
   trackingNumber: string;
+  mrzReference: string;
   onConfirm: () => void;
-  onSkip: () => void;
+  onCancel: () => void;
   isProcessing: boolean;
-  cancelled: boolean;
 }) => (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+  <ModalShell onDismiss={isProcessing ? () => {} : onCancel}>
     <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">
-      {cancelled ? (
-        <>
-          <div className="flex items-center gap-2 mb-3">
-            <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
-              Old Passport Record Cancelled
-            </span>
-          </div>
-          <p className="text-gray-700 text-sm mb-6">
-            The old passport record for{" "}
-            <span className="font-mono font-semibold">{trackingNumber}</span> has
-            been marked as cancelled in the system.
-          </p>
-          <div className="flex justify-end">
-            <button
-              onClick={onSkip}
-              className="px-5 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-sm font-medium"
-            >
-              Done
-            </button>
-          </div>
-        </>
-      ) : (
-        <>
-          <h3 className="text-lg font-bold text-gray-800 mb-2">
-            Confirm Old Passport Cancellation
-          </h3>
-          <p className="text-gray-600 text-sm mb-6">
-            Confirm physical booklet destruction for{" "}
-            <span className="font-mono font-semibold">{trackingNumber}</span>.
-            This will cancel the old passport record in the system.
-          </p>
-          <div className="flex gap-3 justify-end">
-            <button
-              onClick={onSkip}
-              disabled={isProcessing}
-              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors text-sm"
-            >
-              Skip
-            </button>
-            <button
-              onClick={onConfirm}
-              disabled={isProcessing}
-              className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-sm font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
-            >
-              {isProcessing ? "Cancelling…" : "Confirm Cancellation"}
-            </button>
-          </div>
-        </>
-      )}
+      <h3 className="text-lg font-bold text-gray-800 mb-2">
+        Confirm Old Passport Destruction
+      </h3>
+      <p className="text-gray-600 text-sm mb-2">
+        Confirm physical destruction of the old passport booklet for application{" "}
+        <span className="font-mono font-semibold text-gray-800">
+          {trackingNumber}
+        </span>
+        .
+      </p>
+      <p className="text-gray-600 text-sm mb-2">
+        MRZ reference:{" "}
+        <span className="font-mono font-semibold text-gray-800">
+          {mrzReference}
+        </span>
+      </p>
+      <p className="text-red-600 text-sm font-medium mb-6">
+        This action cannot be undone.
+      </p>
+      <div className="flex gap-3 justify-end">
+        <button
+          onClick={onCancel}
+          disabled={isProcessing}
+          className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors text-sm"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={isProcessing}
+          className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-sm font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
+        >
+          {isProcessing ? "Processing…" : "Confirm Destruction"}
+        </button>
+      </div>
     </div>
-  </div>
+  </ModalShell>
 );
 
 // ─── Detail Modal ─────────────────────────────────────────────────────────────
@@ -420,17 +435,17 @@ const ApproveConfirmModal = ({
   onCancel: () => void;
   isProcessing: boolean;
 }) => (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+  <ModalShell onDismiss={isProcessing ? () => {} : onCancel}>
     <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">
       <h3 className="text-lg font-bold text-gray-800 mb-2">
-        Confirm Final Approval
+        Approve this application for issuance?
       </h3>
       <p className="text-gray-600 text-sm mb-6">
-        Approve application{" "}
+        Application{" "}
         <span className="font-mono font-semibold text-gray-800">
           {trackingNumber}
         </span>{" "}
-        for passport issuance? This will mark the application as processed.
+        will be marked as processed and forwarded for passport issuance.
       </p>
       <div className="flex gap-3 justify-end">
         <button
@@ -449,7 +464,7 @@ const ApproveConfirmModal = ({
         </button>
       </div>
     </div>
-  </div>
+  </ModalShell>
 );
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
@@ -457,35 +472,42 @@ const ApproveConfirmModal = ({
 const OfficerDashboard = () => {
   const navigate = useNavigate();
   const currentUser = authService.getCurrentUser();
+  const userId = currentUser?.user.id;
+  const userRole = currentUser?.role;
 
   const [queue, setQueue] = useState<EnrichedApplication[]>([]);
+  const [isLoadingQueue, setIsLoadingQueue] = useState(true);
   const [selectedItem, setSelectedItem] = useState<EnrichedApplication | null>(
     null,
   );
   const [showApproveConfirm, setShowApproveConfirm] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
-  const [cancelDone, setCancelDone] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
 
   useEffect(() => {
-    if (!currentUser) {
+    if (!userId) {
       navigate("/authorized-login");
       return;
     }
-    if (currentUser.role !== "officer") {
+    if (userRole !== "officer") {
       authService.logout();
       navigate("/authorized-login");
     }
-  }, [currentUser, navigate]);
+  }, [userId, userRole, navigate]);
 
   useEffect(() => {
-    if (currentUser?.role === "officer") {
+    if (userId && userRole === "officer") {
+      setIsLoadingQueue(true);
       officerService
-        .getProcessingQueueFull(currentUser.user.id)
-        .then(setQueue);
+        .getProcessingQueueFull(userId)
+        .then((items) => {
+          setQueue(items);
+          setIsLoadingQueue(false);
+        })
+        .catch(() => setIsLoadingQueue(false));
     }
-  }, [currentUser]);
+  }, [userId, userRole]);
 
   const showToast = useCallback(
     (message: string, type: "success" | "error") => {
@@ -496,10 +518,20 @@ const OfficerDashboard = () => {
 
   const dismissToast = useCallback(() => setToast(null), []);
 
+  const mrzReferenceFor = (trackingNumber: string) =>
+    trackingNumber.slice(-6).toUpperCase();
+
   const handleApprove = async () => {
     if (!selectedItem || !currentUser) return;
-    setIsProcessing(true);
 
+    // FR-19: RENEWAL flow defers approval until destruction is confirmed
+    if (selectedItem.app.applicationType === "RENEWAL") {
+      setShowApproveConfirm(false);
+      setShowCancelModal(true);
+      return;
+    }
+
+    setIsProcessing(true);
     await officerService.approveApplication(
       currentUser.user.id,
       selectedItem.app.applicationId,
@@ -511,43 +543,48 @@ const OfficerDashboard = () => {
       ),
     );
 
+    showToast(
+      `Application ${selectedItem.app.trackingNumber} approved for issuance.`,
+      "success",
+    );
     setIsProcessing(false);
     setShowApproveConfirm(false);
-
-    // FR-19: for RENEWAL applications, prompt old passport cancellation
-    if (selectedItem.app.applicationType === "RENEWAL") {
-      setCancelDone(false);
-      setShowCancelModal(true);
-    } else {
-      showToast(
-        `Application ${selectedItem.app.trackingNumber} approved for issuance.`,
-        "success",
-      );
-      setSelectedItem(null);
-    }
+    setSelectedItem(null);
   };
 
-  const handleCancelOldPassport = async () => {
+  // FR-19 — Confirm physical destruction; runs approve + cancel together
+  const handleConfirmRenewalDestruction = async () => {
     if (!selectedItem || !currentUser) return;
     setIsProcessing(true);
 
+    const applicationId = selectedItem.app.applicationId;
+    const trackingNumber = selectedItem.app.trackingNumber;
+    const mrz = mrzReferenceFor(trackingNumber);
+
+    await officerService.approveApplication(
+      currentUser.user.id,
+      applicationId,
+      {
+        suppressNotification: true,
+      },
+    );
     await officerService.cancelOldPassport(
       currentUser.user.id,
-      selectedItem.app.applicationId,
-      selectedItem.app.trackingNumber,
+      applicationId,
+      mrz,
+      currentUser.user.fullName,
     );
 
-    setCancelDone(true);
-    setIsProcessing(false);
+    setQueue((prev) =>
+      prev.filter((e) => e.app.applicationId !== applicationId),
+    );
+
     showToast(
-      `Application ${selectedItem.app.trackingNumber} approved. Old passport record cancelled.`,
+      `Application ${trackingNumber} approved. Old passport cancelled in registry.`,
       "success",
     );
-  };
-
-  const handleCancelModalDone = () => {
+    setIsProcessing(false);
     setShowCancelModal(false);
-    setCancelDone(false);
     setSelectedItem(null);
   };
 
@@ -597,7 +634,20 @@ const OfficerDashboard = () => {
           </div>
 
           <div className="p-6">
-            {queue.length === 0 ? (
+            {isLoadingQueue ? (
+              <div className="space-y-3">
+                {[0, 1, 2].map((i) => (
+                  <div
+                    key={i}
+                    className="border border-gray-200 rounded-lg p-4 animate-pulse"
+                  >
+                    <div className="h-4 w-1/3 bg-gray-200 rounded mb-2" />
+                    <div className="h-3 w-1/2 bg-gray-100 rounded mb-1" />
+                    <div className="h-3 w-1/4 bg-gray-100 rounded" />
+                  </div>
+                ))}
+              </div>
+            ) : queue.length === 0 ? (
               <div className="text-center py-12 bg-gray-50 rounded-lg">
                 <svg
                   className="w-12 h-12 text-gray-300 mx-auto mb-4"
@@ -616,7 +666,8 @@ const OfficerDashboard = () => {
                   No applications awaiting final processing.
                 </p>
                 <p className="text-sm text-gray-400 mt-1">
-                  Applications signed by a mukhtar will appear here.
+                  Applications signed by a mukhtar will appear here. Use the Dev
+                  Status Panel to seed MUKHTAR_SIGNED applications for testing.
                 </p>
               </div>
             ) : (
@@ -666,10 +717,10 @@ const OfficerDashboard = () => {
       {selectedItem && showCancelModal && (
         <CancelOldPassportModal
           trackingNumber={selectedItem.app.trackingNumber}
-          onConfirm={handleCancelOldPassport}
-          onSkip={handleCancelModalDone}
+          mrzReference={mrzReferenceFor(selectedItem.app.trackingNumber)}
+          onConfirm={handleConfirmRenewalDestruction}
+          onCancel={() => setShowCancelModal(false)}
           isProcessing={isProcessing}
-          cancelled={cancelDone}
         />
       )}
 

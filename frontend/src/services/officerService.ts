@@ -73,7 +73,8 @@ export const officerService = {
   approveApplication: async (
     _officerId: string,
     applicationId: string,
-  ): Promise<void> => {
+    options?: { suppressNotification?: boolean },
+  ): Promise<{ success: boolean }> => {
     const timestamp = new Date().toISOString();
     let citizenUserId: string | null = null;
     let trackingNumber = "";
@@ -90,35 +91,72 @@ export const officerService = {
       };
     });
 
-    // TODO: Remove when backend is connected — server creates this notification
-    if (citizenUserId) {
+    // TODO: Remove when backend is connected — NestJS handles notification creation server-side
+    if (citizenUserId && !options?.suppressNotification) {
       notificationService.create(citizenUserId, {
         userId: citizenUserId,
         type: "STATUS_UPDATE",
         title: "Application Processed",
-        message: `Your passport application ${trackingNumber} has been approved and is being processed for delivery.`,
+        message: `Your passport application ${trackingNumber} has been approved and is being processed for issuance.`,
         applicationId,
       });
     }
+    return { success: true };
   },
 
-  // FR-19 — Record old passport cancellation before issuing a renewal
+  // FR-19 — Record old passport cancellation; emits combined renewal notification
   // TODO: POST /api/officer/applications/:id/cancel-old-passport (FR-19)
   cancelOldPassport: async (
     officerId: string,
     applicationId: string,
-    oldPassportNumber: string,
-  ): Promise<void> => {
+    mrzReference: string,
+    officerName?: string,
+  ): Promise<{ success: boolean }> => {
     const cancellationKey = `cancelled_passport_${applicationId}`;
+    const cancelledAt = new Date().toISOString();
     localStorage.setItem(
       cancellationKey,
       JSON.stringify({
         applicationId,
-        oldPassportNumber,
-        cancelledAt: new Date().toISOString(),
-        cancelledBy: officerId,
+        officerId,
+        officerName: officerName ?? null,
+        cancelledAt,
+        mrzReference,
       }),
     );
+
+    // Look up citizen userId + tracking number for notification
+    let citizenUserId: string | null = null;
+    let trackingNumber = "";
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key?.startsWith("applications_")) continue;
+      try {
+        const apps: PassportApplication[] = JSON.parse(
+          localStorage.getItem(key) || "[]",
+        );
+        const found = apps.find((a) => a.applicationId === applicationId);
+        if (found) {
+          citizenUserId = found.userId;
+          trackingNumber = found.trackingNumber;
+          break;
+        }
+      } catch {
+        // skip malformed
+      }
+    }
+
+    // TODO: Remove when backend is connected — NestJS handles notification creation server-side
+    if (citizenUserId) {
+      notificationService.create(citizenUserId, {
+        userId: citizenUserId,
+        type: "STATUS_UPDATE",
+        title: "Renewal Approved",
+        message: `Your passport renewal ${trackingNumber} has been approved. Your previous passport has been officially cancelled in the registry.`,
+        applicationId,
+      });
+    }
+    return { success: true };
   },
 
   // Look up mukhtar signature for an application (displayed in officer detail panel)

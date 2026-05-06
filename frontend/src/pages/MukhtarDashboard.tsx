@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { authService } from "../services/authService";
 import { mukhtarService } from "../services/mukhtarService";
@@ -80,7 +80,9 @@ const QueueCard = ({
         <div className="min-w-0">
           <p className="font-semibold text-gray-800">{citizenName}</p>
           <p className="text-sm text-gray-500 mt-0.5">
-            {app.applicationType === "NEW" ? "New Passport" : "Passport Renewal"}{" "}
+            {app.applicationType === "NEW"
+              ? "New Passport"
+              : "Passport Renewal"}{" "}
             &mdash; {app.mukhtarFormData.district}
           </p>
           <p className="text-xs text-gray-400 mt-1 font-mono">
@@ -122,48 +124,180 @@ const DocRow = ({ label, name }: { label: string; name: string | null }) => {
   );
 };
 
-// ─── Confirmation Modal ───────────────────────────────────────────────────────
+// ─── Dismissible Modal Wrapper ────────────────────────────────────────────────
 
-const ConfirmModal = ({
-  action,
+const ModalShell = ({
+  onDismiss,
+  children,
+}: {
+  onDismiss: () => void;
+  children: ReactNode;
+}) => {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onDismiss();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onDismiss]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      onClick={onDismiss}
+    >
+      <div onClick={(e) => e.stopPropagation()}>{children}</div>
+    </div>
+  );
+};
+
+// ─── Sign Confirmation Modal ──────────────────────────────────────────────────
+
+const ConfirmSignModal = ({
   trackingNumber,
   onConfirm,
   onCancel,
   isProcessing,
 }: {
-  action: "sign" | "reject";
   trackingNumber: string;
   onConfirm: () => void;
   onCancel: () => void;
   isProcessing: boolean;
+}) => (
+  <ModalShell onDismiss={isProcessing ? () => {} : onCancel}>
+    <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">
+      <h3 className="text-lg font-bold text-gray-800 mb-2">
+        Apply your electronic signature to this application?
+      </h3>
+      <p className="text-gray-600 text-sm mb-6">
+        Application{" "}
+        <span className="font-mono font-semibold text-gray-800">
+          {trackingNumber}
+        </span>{" "}
+        will be forwarded to General Security after signing. This action cannot
+        be undone.
+      </p>
+      <div className="flex gap-3 justify-end">
+        <button
+          onClick={onCancel}
+          disabled={isProcessing}
+          className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors text-sm"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={isProcessing}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors text-sm font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
+        >
+          {isProcessing ? "Signing…" : "Confirm & Sign"}
+        </button>
+      </div>
+    </div>
+  </ModalShell>
+);
+
+// ─── Resubmission Form Modal ──────────────────────────────────────────────────
+
+type ResubmissionDocKey = "identityDocument" | "passportPhoto" | "oldPassport";
+
+const RESUBMISSION_DOC_LABELS: Record<ResubmissionDocKey, string> = {
+  identityDocument: "Identity Document",
+  passportPhoto: "Passport Photo",
+  oldPassport: "Old Passport",
+};
+
+const ResubmissionFormModal = ({
+  trackingNumber,
+  isRenewal,
+  onSubmit,
+  onCancel,
+  isProcessing,
+}: {
+  trackingNumber: string;
+  isRenewal: boolean;
+  onSubmit: (reasons: Partial<Record<ResubmissionDocKey, string>>) => void;
+  onCancel: () => void;
+  isProcessing: boolean;
 }) => {
-  const isSigning = action === "sign";
+  const [selected, setSelected] = useState<Record<ResubmissionDocKey, boolean>>(
+    {
+      identityDocument: false,
+      passportPhoto: false,
+      oldPassport: false,
+    },
+  );
+  const [reasons, setReasons] = useState<Record<ResubmissionDocKey, string>>({
+    identityDocument: "",
+    passportPhoto: "",
+    oldPassport: "",
+  });
+
+  const docKeys: ResubmissionDocKey[] = isRenewal
+    ? ["identityDocument", "passportPhoto", "oldPassport"]
+    : ["identityDocument", "passportPhoto"];
+
+  const canSubmit = docKeys.some(
+    (k) => selected[k] && reasons[k].trim().length > 0,
+  );
+
+  const handleSubmit = () => {
+    const out: Partial<Record<ResubmissionDocKey, string>> = {};
+    docKeys.forEach((k) => {
+      if (selected[k] && reasons[k].trim()) out[k] = reasons[k].trim();
+    });
+    onSubmit(out);
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">
+    <ModalShell onDismiss={isProcessing ? () => {} : onCancel}>
+      <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full mx-4 p-6">
         <h3 className="text-lg font-bold text-gray-800 mb-2">
-          {isSigning ? "Apply Electronic Signature" : "Request Resubmission"}
+          Request Document Resubmission
         </h3>
-        <p className="text-gray-600 text-sm mb-6">
-          {isSigning ? (
-            <>
-              You are about to apply your electronic signature to application{" "}
-              <span className="font-mono font-semibold text-gray-800">
-                {trackingNumber}
-              </span>
-              . This action cannot be undone.
-            </>
-          ) : (
-            <>
-              You are requesting document resubmission for application{" "}
-              <span className="font-mono font-semibold text-gray-800">
-                {trackingNumber}
-              </span>
-              . The citizen will be notified.
-            </>
-          )}
+        <p className="text-gray-600 text-sm mb-4">
+          Select each document that requires resubmission for application{" "}
+          <span className="font-mono font-semibold text-gray-800">
+            {trackingNumber}
+          </span>{" "}
+          and provide a reason. The citizen will be notified.
         </p>
-        <div className="flex gap-3 justify-end">
+
+        <div className="space-y-3 max-h-80 overflow-y-auto">
+          {docKeys.map((k) => (
+            <div
+              key={k}
+              className="border border-gray-200 rounded-lg p-3 bg-gray-50"
+            >
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={selected[k]}
+                  onChange={(e) =>
+                    setSelected((prev) => ({ ...prev, [k]: e.target.checked }))
+                  }
+                  className="w-4 h-4"
+                />
+                <span className="text-sm font-medium text-gray-800">
+                  {RESUBMISSION_DOC_LABELS[k]}
+                </span>
+              </label>
+              {selected[k] && (
+                <textarea
+                  value={reasons[k]}
+                  onChange={(e) =>
+                    setReasons((prev) => ({ ...prev, [k]: e.target.value }))
+                  }
+                  placeholder="Reason for resubmission (e.g. blurry, expired, incorrect format)…"
+                  className="mt-2 w-full text-sm border border-gray-300 rounded p-2 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                  rows={2}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="flex gap-3 justify-end mt-6">
           <button
             onClick={onCancel}
             disabled={isProcessing}
@@ -172,23 +306,15 @@ const ConfirmModal = ({
             Cancel
           </button>
           <button
-            onClick={onConfirm}
-            disabled={isProcessing}
-            className={`px-4 py-2 text-white rounded-md transition-colors text-sm font-medium disabled:bg-gray-400 disabled:cursor-not-allowed ${
-              isSigning
-                ? "bg-blue-600 hover:bg-blue-700"
-                : "bg-yellow-600 hover:bg-yellow-700"
-            }`}
+            onClick={handleSubmit}
+            disabled={!canSubmit || isProcessing}
+            className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-md transition-colors text-sm font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
           >
-            {isProcessing
-              ? "Processing…"
-              : isSigning
-                ? "Confirm & Sign"
-                : "Confirm Resubmission"}
+            {isProcessing ? "Submitting…" : "Submit Resubmission Request"}
           </button>
         </div>
       </div>
-    </div>
+    </ModalShell>
   );
 };
 
@@ -206,8 +332,7 @@ const DetailModal = ({
   onReject: () => void;
 }) => {
   const { app, citizenIdentity } = item;
-  const dob =
-    citizenIdentity?.dateOfBirth ?? citizenIdentity?.dob ?? "—";
+  const dob = citizenIdentity?.dateOfBirth ?? citizenIdentity?.dob ?? "—";
 
   return (
     <div className="fixed inset-0 z-40 flex items-start justify-center bg-black/50 overflow-y-auto py-8">
@@ -375,8 +500,11 @@ const DetailModal = ({
 const MukhtarDashboard = () => {
   const navigate = useNavigate();
   const currentUser = authService.getCurrentUser();
+  const userId = currentUser?.user.id;
+  const userRole = currentUser?.role;
 
   const [queue, setQueue] = useState<EnrichedApplication[]>([]);
+  const [isLoadingQueue, setIsLoadingQueue] = useState(true);
   const [selectedItem, setSelectedItem] = useState<EnrichedApplication | null>(
     null,
   );
@@ -387,27 +515,37 @@ const MukhtarDashboard = () => {
   const [toast, setToast] = useState<ToastState | null>(null);
 
   useEffect(() => {
-    if (!currentUser) {
+    if (!userId) {
       navigate("/authorized-login");
       return;
     }
-    if (currentUser.role !== "mukhtar") {
+    if (userRole !== "mukhtar") {
       authService.logout();
       navigate("/authorized-login");
     }
-  }, [currentUser, navigate]);
+  }, [userId, userRole, navigate]);
+
+  const mukhtarUserId =
+    currentUser?.role === "mukhtar" ? currentUser.user.id : null;
 
   useEffect(() => {
-    if (currentUser?.role === "mukhtar") {
-      mukhtarService
-        .getPendingApplicationsFull(currentUser.user.id)
-        .then(setQueue);
-    }
-  }, [currentUser]);
+    if (!mukhtarUserId) return;
+    setIsLoadingQueue(true);
+    mukhtarService
+      .getPendingApplicationsFull(mukhtarUserId)
+      .then((items) => {
+        setQueue(items);
+        setIsLoadingQueue(false);
+      })
+      .catch(() => setIsLoadingQueue(false));
+  }, [mukhtarUserId]);
 
-  const showToast = useCallback((message: string, type: "success" | "error") => {
-    setToast({ message, type });
-  }, []);
+  const showToast = useCallback(
+    (message: string, type: "success" | "error") => {
+      setToast({ message, type });
+    },
+    [],
+  );
 
   const dismissToast = useCallback(() => setToast(null), []);
 
@@ -419,10 +557,7 @@ const MukhtarDashboard = () => {
     if (Math.random() < 0.05) {
       setIsProcessing(false);
       setConfirmAction(null);
-      showToast(
-        "Cryptographic signature failed. Please try again.",
-        "error",
-      );
+      showToast("Cryptographic signature failed. Please try again.", "error");
       return;
     }
 
@@ -445,13 +580,16 @@ const MukhtarDashboard = () => {
     setSelectedItem(null);
   };
 
-  const handleReject = async () => {
+  const handleReject = async (
+    reasons: Partial<Record<ResubmissionDocKey, string>>,
+  ) => {
     if (!selectedItem || !currentUser) return;
     setIsProcessing(true);
 
-    await mukhtarService.rejectApplication(
+    await mukhtarService.requestResubmission(
       currentUser.user.id,
       selectedItem.app.applicationId,
+      reasons,
     );
 
     setQueue((prev) =>
@@ -506,8 +644,8 @@ const MukhtarDashboard = () => {
           <p className="text-amber-800 text-sm">
             <span className="font-semibold">Legal Notice:</span> Under Law No.
             81/2018, your electronic signature holds the same legal weight as a
-            physical signature. Review all applicant information carefully before
-            taking action.
+            physical signature. Review all applicant information carefully
+            before taking action.
           </p>
         </div>
 
@@ -523,7 +661,20 @@ const MukhtarDashboard = () => {
           </div>
 
           <div className="p-6">
-            {queue.length === 0 ? (
+            {isLoadingQueue ? (
+              <div className="space-y-3">
+                {[0, 1, 2].map((i) => (
+                  <div
+                    key={i}
+                    className="border border-gray-200 rounded-lg p-4 animate-pulse"
+                  >
+                    <div className="h-4 w-1/3 bg-gray-200 rounded mb-2" />
+                    <div className="h-3 w-1/2 bg-gray-100 rounded mb-1" />
+                    <div className="h-3 w-1/4 bg-gray-100 rounded" />
+                  </div>
+                ))}
+              </div>
+            ) : queue.length === 0 ? (
               <div className="text-center py-12 bg-gray-50 rounded-lg">
                 <svg
                   className="w-12 h-12 text-gray-300 mx-auto mb-4"
@@ -539,10 +690,11 @@ const MukhtarDashboard = () => {
                   />
                 </svg>
                 <p className="text-gray-500 font-medium">
-                  No pending applications in your jurisdiction.
+                  No applications awaiting review.
                 </p>
                 <p className="text-sm text-gray-400 mt-1">
-                  New applications will appear here once verified by the system.
+                  Use the Dev Status Panel to mark a citizen application as
+                  VERIFIED for testing.
                 </p>
               </div>
             ) : (
@@ -570,12 +722,22 @@ const MukhtarDashboard = () => {
         />
       )}
 
-      {/* Confirmation Modal */}
-      {selectedItem && confirmAction && (
-        <ConfirmModal
-          action={confirmAction}
+      {/* Sign Confirmation Modal */}
+      {selectedItem && confirmAction === "sign" && (
+        <ConfirmSignModal
           trackingNumber={selectedItem.app.trackingNumber}
-          onConfirm={confirmAction === "sign" ? handleSign : handleReject}
+          onConfirm={handleSign}
+          onCancel={() => setConfirmAction(null)}
+          isProcessing={isProcessing}
+        />
+      )}
+
+      {/* Resubmission Form Modal (FR-22) */}
+      {selectedItem && confirmAction === "reject" && (
+        <ResubmissionFormModal
+          trackingNumber={selectedItem.app.trackingNumber}
+          isRenewal={selectedItem.app.applicationType === "RENEWAL"}
+          onSubmit={handleReject}
           onCancel={() => setConfirmAction(null)}
           isProcessing={isProcessing}
         />
