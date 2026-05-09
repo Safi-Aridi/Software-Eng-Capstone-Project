@@ -11,7 +11,6 @@ This document is a running record of all implementation work done on the NPIS fr
 ## Session 1 — Authentication & Identity Verification
 
 ### Key Areas:
-
 - Frontend authentication with mock login via localStorage
 - Identity Verification (KYC) workflow
 - Role-based routing (citizen / mukhtar / officer)
@@ -19,7 +18,6 @@ This document is a running record of all implementation work done on the NPIS fr
 - Test user seeding
 
 ### Files Created:
-
 - `IdentityVerificationPage.tsx` — document upload and mock identity data extraction
 - `IdentityVerificationPendingPanel.tsx` — pending status display
 - `IdentityVerificationRejectedPanel.tsx` — rejection handling and resubmission option
@@ -27,7 +25,6 @@ This document is a running record of all implementation work done on the NPIS fr
 - `AuthorizedLoginPage.tsx` — Mukhtar login (hidden behind small link)
 
 ### Files Modified:
-
 - `authService.ts` — mock auth logic, localStorage scoping per user
 - `CitizenSignupPage.tsx` — routes to identity verification after signup
 - `CitizenLoginPage.tsx` — routes based on KYC status on login
@@ -35,18 +32,16 @@ This document is a running record of all implementation work done on the NPIS fr
 - `KycSubmissionPanel.tsx`, `KycPendingPanel.tsx`, `KycRejectedPanel.tsx` — renamed to Identity Verification terminology
 
 ### Routes:
-
-| Route                    | Component                    |
-| ------------------------ | ---------------------------- |
-| `/`                      | CitizenLoginPage             |
-| `/signup`                | CitizenSignupPage            |
-| `/authorized-login`      | AuthorizedLoginPage          |
-| `/identity-verification` | IdentityVerificationPage     |
-| `/citizen/dashboard`     | CitizenDashboard (protected) |
-| `/mukhtar/dashboard`     | MukhtarDashboard (protected) |
+| Route | Component |
+|---|---|
+| `/` | CitizenLoginPage |
+| `/signup` | CitizenSignupPage |
+| `/authorized-login` | AuthorizedLoginPage |
+| `/identity-verification` | IdentityVerificationPage |
+| `/citizen/dashboard` | CitizenDashboard (protected) |
+| `/mukhtar/dashboard` | MukhtarDashboard (protected) |
 
 ### Citizen Flow:
-
 1. Sign up with email/mobile + password
 2. Redirected to Identity Verification page — upload document (QR/barcode/civil registry extract)
 3. System mock-extracts: Full Name, Registry Number (readonly), Date of Birth
@@ -54,31 +49,27 @@ This document is a running record of all implementation work done on the NPIS fr
 5. Dashboard shows correct state: Pending / Accepted / Rejected
 
 ### Issues Fixed:
-
 - **Multiple login data bleed**: localStorage keys were shared across users. Fixed by scoping all KYC data to `kyc_status_<userId>` and `identity_data_<userId>`.
 - **Re-prompting KYC on login**: After signup and KYC submission, login was re-routing to identity verification. Fixed by checking submission status before routing.
 
 ### Test Users (seeded in localStorage):
-
-| User         | Email             | Password | KYC Status                    |
-| ------------ | ----------------- | -------- | ----------------------------- |
-| Ahmad Khalil | pending@test.com  | test123  | PENDING_IDENTITY_VERIFICATION |
-| Sara Mansour | accepted@test.com | test123  | IDENTITY_VERIFIED             |
-| Omar Fayyad  | rejected@test.com | test123  | IDENTITY_REJECTED             |
+| User | Email | Password | KYC Status |
+|---|---|---|---|
+| Ahmad Khalil | pending@test.com | test123 | PENDING_IDENTITY_VERIFICATION |
+| Sara Mansour | accepted@test.com | test123 | IDENTITY_VERIFIED |
+| Omar Fayyad | rejected@test.com | test123 | IDENTITY_REJECTED |
 
 ---
 
 ## Session 2 — localStorage Scoping Fix & Auth Hardening
 
 ### Key Areas:
-
 - Fixed user-specific localStorage data scoping
 - Established full frontend authentication system
 - Supabase database connected to backend (connection later postponed)
 - API service layer prepared for future integration
 
 ### Changes:
-
 - All KYC/identity data keyed by `userId` — no shared keys remain
 - On logout: clears session only, not other users' data
 - `seedTestData.ts` created — seeds users only if not already present (safe on reload)
@@ -93,40 +84,34 @@ This document is a running record of all implementation work done on the NPIS fr
 ## Session 3 — Passport Application Creation (Phase 1)
 
 ### SRS Requirements Covered:
-
 - FR-06: Base application record generation
 - FR-07: Live biometric capture placeholder (new applications)
 - FR-08: Renewal request evaluation + old passport upload
 - FR-08.1: Fee calculation based on validity duration
 
 ### Files Created:
-
 - `src/services/applicationService.ts` — application CRUD against localStorage, tracking number generation, TODO markers for real API endpoints
 - `src/pages/NewPassportApplicationPage.tsx` — 5-step multi-step application form
 
 ### Files Modified:
-
 - `CitizenDashboard.tsx` — "Apply for Passport" button routes to `/application/new`; application cards with status badges
 - `App.tsx` — added `/application/new` route (protected, citizen only)
 
 ### Routes Added:
-
-| Route              | Component                              |
-| ------------------ | -------------------------------------- |
+| Route | Component |
+|---|---|
 | `/application/new` | NewPassportApplicationPage (protected) |
 
 ### Application Form — 5 Steps (later expanded to 6, see Session 7):
-
-| Step                          | Content                                                                      |
-| ----------------------------- | ---------------------------------------------------------------------------- |
-| 1 — Type Selection            | "New Passport" or "Passport Renewal" option cards                            |
-| 2 — Passport Details          | Validity (5yr / 10yr), calculated fee (200,000 / 350,000 LBP)                |
-| 3 — Document Upload           | Identity doc + passport photo (both flows); old passport scan (renewal only) |
-| 4 — Mukhtar Form & Biometrics | Address, District, Mukhtar name; mock biometric capture (new only)           |
-| 5 — Review & Submit           | Read-only summary, submit saves to localStorage, redirects to dashboard      |
+| Step | Content |
+|---|---|
+| 1 — Type Selection | "New Passport" or "Passport Renewal" option cards |
+| 2 — Passport Details | Validity (5yr / 10yr), calculated fee (200,000 / 350,000 LBP) |
+| 3 — Document Upload | Identity doc + passport photo (both flows); old passport scan (renewal only) |
+| 4 — Mukhtar Form & Biometrics | Address, District, Mukhtar name; mock biometric capture (new only) |
+| 5 — Review & Submit | Read-only summary, submit saves to localStorage, redirects to dashboard |
 
 ### Key Implementation Details:
-
 - Single-page component with internal step state — no separate routes per step
 - Renewal flow blocks Next at Step 3 if old passport is missing (FR-08 exception)
 - Biometric step marked with `// TODO: Replace with real biometric capture component (FR-07)`
@@ -134,24 +119,17 @@ This document is a running record of all implementation work done on the NPIS fr
 - Dashboard shows application cards: tracking number, type, submission date, color-coded status badge
 
 ### PassportApplication Interface:
-
 ```typescript
 interface PassportApplication {
   applicationId: string;
   userId: string;
-  applicationType: "NEW" | "RENEWAL";
-  currentStatus:
-    | "PENDING_REVIEW"
-    | "VERIFIED"
-    | "MUKHTAR_SIGNED"
-    | "PROCESSED"
-    | "RESUBMISSION_REQUIRED"
-    | "DELIVERED";
+  applicationType: 'NEW' | 'RENEWAL';
+  currentStatus: 'PENDING_REVIEW' | 'VERIFIED' | 'MUKHTAR_SIGNED' | 'PROCESSED' | 'RESUBMISSION_REQUIRED' | 'DELIVERED';
   submissionDate: string;
-  trackingNumber: string; // NPIS-2026-XXXXXX
+  trackingNumber: string;         // NPIS-2026-XXXXXX
   passportValidity: 5 | 10;
   feeAmount: number;
-  paymentStatus: "UNPAID" | "Paid" | "Failed";
+  paymentStatus: 'UNPAID' | 'Paid' | 'Failed';
   documents: {
     identityDocument: string | null;
     passportPhoto: string | null;
@@ -171,7 +149,6 @@ interface PassportApplication {
 ## Session 3 (cont.) — Status Tracking & Document Enhancements (Phase 3)
 
 ### SRS Requirements Covered:
-
 - FR-10: Application status display
 - FR-11: Estimated completion time display (mocked)
 - FR-22: Resubmission status handling
@@ -179,25 +156,21 @@ interface PassportApplication {
 - NFR-USA-02: Clear validation messages on invalid inputs
 
 ### Files Created:
-
 - `src/pages/ApplicationStatusPage.tsx` — full status timeline page per application
 - `src/pages/DocumentResubmissionPage.tsx` — resubmission form for RESUBMISSION_REQUIRED applications
 
 ### Files Modified:
-
 - `NewPassportApplicationPage.tsx` — enhanced document upload with drag-and-drop, progress simulation, image thumbnail preview, PDF icon for PDF files
 - `CitizenDashboard.tsx` — "Track Application" button per card; yellow warning banner for RESUBMISSION_REQUIRED applications
 - `App.tsx` — added status and resubmission routes
 
 ### Routes Added:
-
-| Route                                  | Component                            |
-| -------------------------------------- | ------------------------------------ |
-| `/application/status/:applicationId`   | ApplicationStatusPage (protected)    |
+| Route | Component |
+|---|---|
+| `/application/status/:applicationId` | ApplicationStatusPage (protected) |
 | `/application/resubmit/:applicationId` | DocumentResubmissionPage (protected) |
 
-### Status Timeline Stages (in order):
-
+### Status Timeline Stages (in order) — later expanded to 7 stages, see Session 11:
 1. Application Submitted
 2. Documents Under Review
 3. Verified by System
@@ -205,40 +178,31 @@ interface PassportApplication {
 5. Processed for Issuance
 6. Delivered
 
-- Completed stages: green filled circle
-- Current stage: blue pulsing circle
-- Pending stages: gray dashed
-- `RESUBMISSION_REQUIRED`: red highlight on "Documents Under Review" + action banner
-
-### Estimated Completion Mock Logic (FR-11):
-
-| Status                | Estimate Shown                  |
-| --------------------- | ------------------------------- |
-| PENDING_REVIEW        | 5–7 business days               |
-| VERIFIED              | 3–5 business days               |
-| MUKHTAR_SIGNED        | 2–3 business days               |
-| PROCESSED             | 1–2 business days               |
-| DELIVERED             | Completed                       |
+### Estimated Completion Mock Logic (FR-11) — updated in Session 11:
+| Status | Estimate Shown |
+|---|---|
+| PENDING_REVIEW | 5–7 business days |
+| VERIFIED | 3–5 business days |
+| MUKHTAR_SIGNED | 2–3 business days |
+| PROCESSED | 1–2 business days |
+| DELIVERED | Completed |
 | RESUBMISSION_REQUIRED | On hold — awaiting resubmission |
 
 ### Additional Test Applications Seeded:
-
-| User                    | App   | Type    | Status                | Tracking         |
-| ----------------------- | ----- | ------- | --------------------- | ---------------- |
-| Sara Mansour (user_002) | App 1 | NEW     | MUKHTAR_SIGNED        | NPIS-2026-000001 |
-| Sara Mansour (user_002) | App 2 | RENEWAL | PENDING_REVIEW        | NPIS-2026-000002 |
-| Ahmad Khalil (user_001) | App 1 | NEW     | RESUBMISSION_REQUIRED | NPIS-2026-000003 |
+| User | App | Type | Status | Tracking |
+|---|---|---|---|---|
+| Sara Mansour (user_002) | App 1 | NEW | MUKHTAR_SIGNED | NPIS-2026-000001 |
+| Sara Mansour (user_002) | App 2 | RENEWAL | PENDING_REVIEW | NPIS-2026-000002 |
+| Ahmad Khalil (user_001) | App 1 | NEW | RESUBMISSION_REQUIRED | NPIS-2026-000003 |
 
 ---
 
 ## Session 3 (cont.) — API Service Layer (Phase 4)
 
 ### Purpose:
-
 Decouple all components from direct localStorage access. All data access now goes through typed service classes with TODO markers at every point where a real API call will replace the mock.
 
 ### Files Created:
-
 - `src/services/apiClient.ts` — base API client (URL config, auth headers, error handling, not yet active)
 - `src/services/notificationService.ts` — FR-23, FR-32 notifications stored in `notifications_<userId>`
 - `src/services/paymentService.ts` — FR-09, FR-28/29/30 payment records, simulated CashPlus callback
@@ -247,21 +211,19 @@ Decouple all components from direct localStorage access. All data access now goe
 - `src/services/index.ts` — barrel export for all services
 
 ### Files Modified:
-
 - `src/services/authService.ts` — refactored to typed async functions with TODO comments
 - `src/services/applicationService.ts` — refactored to typed async functions with TODO comments
 - `CitizenDashboard.tsx`, `ApplicationStatusPage.tsx`, `DocumentResubmissionPage.tsx`, `NewPassportApplicationPage.tsx` — all direct localStorage calls replaced with service function calls
 
 ### Service Architecture:
-
-| Service             | SRS Coverage               | Future Endpoint                            |
-| ------------------- | -------------------------- | ------------------------------------------ |
-| authService         | FR-03, FR-04, FR-05        | POST /api/auth/login, /register            |
-| applicationService  | FR-06, FR-08, FR-10, FR-11 | GET/POST /api/applications                 |
-| notificationService | FR-23, FR-32               | GET /api/notifications                     |
-| paymentService      | FR-09, FR-28, FR-29, FR-30 | POST /api/payments/initiate                |
-| mukhtarService      | FR-13, FR-15, FR-16        | GET/POST /api/mukhtar/applications         |
-| officerService      | FR-18, FR-19               | POST /api/officer/applications/:id/approve |
+| Service | SRS Coverage | Future Endpoint |
+|---|---|---|
+| authService | FR-03, FR-04, FR-05 | POST /api/auth/login, /register |
+| applicationService | FR-06, FR-08, FR-10, FR-11 | GET/POST /api/applications |
+| notificationService | FR-23, FR-32 | GET /api/notifications |
+| paymentService | FR-09, FR-28, FR-29, FR-30 | POST /api/payments/initiate |
+| mukhtarService | FR-13, FR-15, FR-16 | GET/POST /api/mukhtar/applications |
+| officerService | FR-18, FR-19 | POST /api/officer/applications/:id/approve |
 
 **Commit:** `feat: Implement passport application workflow and service architecture`
 
@@ -269,76 +231,37 @@ Decouple all components from direct localStorage access. All data access now goe
 
 ## Session 4 — Mukhtar & GS Officer Dashboards (Phase 5 & 6)
 
-### SRS Requirements Covered:
-
-- FR-12 to FR-16: Mukhtar authentication, pending queue, citizen data display, e-signature, status update
-- FR-17 to FR-19: GS Officer authentication, final approval, old passport cancellation
+### Note:
+Session 4 scaffolded the Mukhtar and Officer dashboard files and service stubs. The dashboards were non-interactive placeholders at this stage. Full functional implementation was completed in Session 9.
 
 ### Files Created:
-
-- `src/pages/MukhtarDashboard.tsx` — pending application queue, detail drawer, approve & sign, request resubmission
-- `src/pages/OfficerDashboard.tsx` — MUKHTAR_SIGNED queue, final approval, old passport cancellation for renewals
+- `src/pages/MukhtarDashboard.tsx` — scaffolded (non-functional at this stage)
+- `src/pages/OfficerDashboard.tsx` — scaffolded (non-functional at this stage)
 
 ### Files Modified:
-
-- `src/services/mukhtarService.ts` — extended with `signApplication()`, `requestResubmission()` mock functions
-- `src/services/officerService.ts` — extended with `approveApplication()`, `cancelOldPassport()` mock functions
+- `src/services/mukhtarService.ts` — stub functions added
+- `src/services/officerService.ts` — stub functions added
 - `AuthorizedLoginPage.tsx` — updated to route `mukhtar` role → `/mukhtar/dashboard`, `officer` role → `/officer/dashboard`
 - `App.tsx` — added protected routes for both dashboards
-- `src/utils/seedTestData.ts` — seeded Mukhtar and Officer test users; seeded VERIFIED and MUKHTAR_SIGNED test applications
+- `src/utils/seedTestData.ts` — seeded Mukhtar and Officer test users
 
 ### Routes Added:
-
-| Route                | Component                                   |
-| -------------------- | ------------------------------------------- |
+| Route | Component |
+|---|---|
 | `/mukhtar/dashboard` | MukhtarDashboard (protected, role: mukhtar) |
 | `/officer/dashboard` | OfficerDashboard (protected, role: officer) |
 
-### Mukhtar Dashboard Features:
-
-- Loads applications with `currentStatus === 'VERIFIED'` from localStorage
-- Each card shows: tracking number, applicant name, type, submission date, district
-- Detail drawer: full citizen data, document thumbnails, application summary
-- "Approve & Sign" button with confirmation modal — 5% random signature failure simulation
-- On success: status → `MUKHTAR_SIGNED`, mock signature stored as `mukhtar_signature_<applicationId>`
-- "Request Resubmission" button → status → `RESUBMISSION_REQUIRED`
-- Success/error toast notifications, auto-dismiss after 3 seconds
-
-### GS Officer Dashboard Features:
-
-- Loads applications with `currentStatus === 'MUKHTAR_SIGNED'`
-- Detail panel shows full application data + Mukhtar signature timestamp
-- "Final Approval" button → status → `PROCESSED`
-- For RENEWAL applications: secondary confirmation modal for old passport cancellation → stored as `cancelled_passport_<applicationId>`
-- NEW applications skip cancellation step entirely
-
 ### Test Users Added:
-
-| User         | Email            | Password | Role    |
-| ------------ | ---------------- | -------- | ------- |
-| Khalil Raad  | mukhtar@test.com | test123  | mukhtar |
-| Rima Sleiman | officer@test.com | test123  | officer |
-
-### Test Applications Added:
-
-| User         | Type    | Status         | Tracking         |
-| ------------ | ------- | -------------- | ---------------- |
-| Sara Mansour | NEW     | VERIFIED       | NPIS-2026-000004 |
-| Sara Mansour | NEW     | VERIFIED       | NPIS-2026-000005 |
-| Sara Mansour | RENEWAL | VERIFIED       | NPIS-2026-000006 |
-| Sara Mansour | NEW     | MUKHTAR_SIGNED | NPIS-2026-000007 |
-| Sara Mansour | RENEWAL | MUKHTAR_SIGNED | NPIS-2026-000008 |
-
-### Known Issue:
-
-- Mukhtar dashboard UI exists but functionality needs verification — the queue, detail drawer, and signing flow require end-to-end testing to confirm all state transitions work correctly.
+| User | Email | Password | Role |
+|---|---|---|---|
+| Khalil Raad | mukhtar@test.com | test123 | mukhtar |
+| Rima Sleiman | officer@test.com | test123 | officer |
 
 ---
 
 ## Session 5 — Payment Flow UI (Phase 7)
 
 ### SRS Requirements Covered:
-
 - FR-08.1: Fee calculation before payment transmission
 - FR-09: Application fee transmission to CashPlus gateway
 - FR-28: Payment success callback processing
@@ -346,11 +269,9 @@ Decouple all components from direct localStorage access. All data access now goe
 - FR-30: Payment timeout handling (15-minute rule)
 
 ### Files Created:
-
 - `src/pages/PaymentPage.tsx` — dedicated payment screen at `/application/pay/:applicationId`
 
 ### Files Modified:
-
 - `src/services/paymentService.ts` — added `initiatePayment()`, `getPaymentStatus()`, `checkExpiredPayments()` with TODO markers
 - `src/services/applicationService.ts` — added `paymentStatus: 'UNPAID' | 'Paid' | 'Failed'` field to PassportApplication interface
 - `NewPassportApplicationPage.tsx` — Step 6 (Review) now redirects to `/application/pay/:applicationId` instead of dashboard; fee acknowledgment shown clearly
@@ -358,55 +279,31 @@ Decouple all components from direct localStorage access. All data access now goe
 - `App.tsx` — added `/application/pay/:applicationId` protected route
 
 ### Routes Added:
-
-| Route                             | Component                             |
-| --------------------------------- | ------------------------------------- |
+| Route | Component |
+|---|---|
 | `/application/pay/:applicationId` | PaymentPage (protected, citizen only) |
 
 ### Payment Flow:
-
 1. Citizen submits application → saved with `paymentStatus: 'UNPAID'` → redirected to PaymentPage
 2. PaymentPage shows: tracking number, type, validity, fee amount prominently, CashPlus branding placeholder
 3. "Pay Now" triggers 2-second loading state ("Connecting to CashPlus gateway...")
 4. Weighted random outcome simulation:
-   - 75% SUCCESS → `paymentStatus: 'Paid'` → green confirmation → 3-second countdown → redirect to dashboard
+   - 75% SUCCESS → `paymentStatus: 'Paid'` → green confirmation → countdown → redirect to dashboard
    - 15% FAILED → `paymentStatus: 'Failed'` → red panel → "Retry Payment" option → failure notification created
    - 10% GATEWAY UNAVAILABLE → no state change → amber panel → "Return to Dashboard"
 5. Back-navigation guard using React Router `useBlocker` (no `window.unload` events)
 6. FR-30: On dashboard load, applications with `paymentStatus: 'UNPAID'` older than 15 minutes are auto-failed
-
-### Payment Record Structure (localStorage key: `payment_<applicationId>`):
-
-```typescript
-{
-  applicationId: string,
-  userId: string,
-  amount: number,
-  status: 'UNPAID' | 'Paid' | 'Failed',
-  initiatedAt: string | null,
-  resolvedAt: string | null,
-  gatewayRef: string | null   // 'CASHPLUS-MOCK-<8 digits>' on success
-}
-```
-
-### Test Application Added:
-
-| User         | Type | Status         | Payment | Tracking         | Note                                                             |
-| ------------ | ---- | -------------- | ------- | ---------------- | ---------------------------------------------------------------- |
-| Sara Mansour | NEW  | PENDING_REVIEW | UNPAID  | NPIS-2026-000009 | Submitted 20min ago — triggers FR-30 auto-fail on dashboard load |
 
 ---
 
 ## Session 6 — Routing Bug Fixes
 
 ### Problems Fixed:
-
-- **White screen on page reload**: Vite dev server was not configured to fall back to `index.html` for client-side routes. Fixed by adding `historyApiFallback: true` to `vite.config.ts` and creating `public/_redirects` for deployment.
-- **Back button not re-rendering page**: Diagnosed and fixed duplicate Router mounting or stale navigation state issue in `App.tsx` / `main.tsx`.
-- **`unload` Permissions Policy violation**: Removed all `window.addEventListener('beforeunload'/'unload', ...)` calls. Replaced PaymentPage back-navigation guard with React Router's `useBlocker` hook — in-page confirmation modal instead of browser dialog.
+- **White screen on page reload**: Fixed by adding `historyApiFallback: true` to `vite.config.ts` and creating `public/_redirects` for deployment.
+- **Back button not re-rendering page**: Fixed duplicate Router mounting issue in `App.tsx` / `main.tsx`.
+- **`unload` Permissions Policy violation**: Removed all `window.addEventListener('beforeunload'/'unload', ...)` calls. Replaced PaymentPage back-navigation guard with React Router's `useBlocker` hook.
 
 ### Files Modified:
-
 - `vite.config.ts` — added `server: { historyApiFallback: true }`
 - `public/_redirects` — created with `/* /index.html 200` for deployment
 - `App.tsx` / `main.tsx` — ensured single Router instance
@@ -417,83 +314,43 @@ Decouple all components from direct localStorage access. All data access now goe
 ## Session 7 — OTP UI, Dev Status Panel, Biometric Fix (Phase 8 & 9)
 
 ### SRS Requirements Covered:
-
 - FR-02: Mobile number OTP validation UI
 - FR-07, FR-07.1, FR-07.2: Live biometric capture with manual trigger and stability timer
 - NFR-USA-04: AI assistant guidance
 
 ### Files Created:
-
 - `src/components/BiometricCaptureWidget.tsx` — full guided biometric capture simulation (face + fingerprints)
 - `src/components/AiAssistantWidget.tsx` — floating chat widget powered by Anthropic API
 - `src/components/DevStatusPanel.tsx` — developer tool for overriding application status (dev mode only)
 - `src/layouts/CitizenLayout.tsx` — layout wrapper rendering AI assistant on all citizen routes
 
 ### Files Modified:
-
-- `CitizenSignupPage.tsx` — added 2-step OTP flow (registration form → 6-box OTP input with countdown timer)
-- `authService.ts` — added `generateOtp()` and `validateOtp()` with localStorage mock and console.log for dev testing
-- `NewPassportApplicationPage.tsx` — expanded from 5 to 6 steps; split Mukhtar details (Step 4) and Biometric Capture (Step 5, NEW only) into separate steps; Step 6 is Review & Submit
+- `CitizenSignupPage.tsx` — added 2-step OTP flow
+- `authService.ts` — added `generateOtp()` and `validateOtp()` with localStorage mock
+- `NewPassportApplicationPage.tsx` — expanded from 5 to 6 steps
 - `App.tsx` — added DevStatusPanel (dev mode only); wrapped citizen routes in CitizenLayout
 
-### OTP Flow (FR-02):
-
-- Step 1: Registration form → "Send OTP" button → calls `authService.generateOtp(mobile)` → OTP logged to console in dev
-- Step 2: 6 individual digit input boxes (auto-advance, auto-submit on fill) + 5-minute countdown timer
-- Resend Code link: disabled until timer expires, then re-enables
-- Error states: INVALID ("X attempts remaining"), EXPIRED (resend immediately), LOCKED ("Too many attempts — Start Over")
-- OTP stored as `otp_<mobile>: { code, expiresAt, attempts }` in localStorage
-- TODO: Replace with POST /api/otp/send and POST /api/otp/validate
-
-### Biometric Capture Widget (FR-07, FR-07.1, FR-07.2):
-
-- Stage 1 — Face Capture:
-  - Idle on mount — oval frame shown, "Start Face Capture" button required to begin
-  - ML feedback loop starts only after button click (setInterval every 2500ms)
-  - ALL CLEAR (~30% probability) → starts 3-second SVG arc timer
-  - Any error before timer completes → timer resets, error instruction displayed
-  - Capture success → advances to Stage 2
-- Stage 2 — Fingerprint Capture (3 sub-steps):
-  - Idle on mount — "Start Fingerprint Capture" button required to begin
-  - Sub-step sequence: Right hand → Left hand → Thumbs
-  - Manual "Continue" button between each sub-step
-  - Same ML feedback loop + 3-second timer per sub-step
-  - All 3 complete → calls `onCaptureComplete({ faceCaptured: true, fingerprintsCaptured: true })`
-- Step 5 "Next" button disabled until biometricCaptured === true
-- Compliance note displayed: ISO/IEC 19794-4 and ISO/IEC 19794-5
-
 ### Application Form — Final 6-Step Structure:
+| Step | Content | Shown For |
+|---|---|---|
+| 1 — Type Selection | New Passport / Passport Renewal | Both |
+| 2 — Passport Details | Validity, fee calculation | Both |
+| 3 — Document Upload | Identity doc, passport photo, old passport | Both (old passport: renewal only) |
+| 4 — Mukhtar Details | Address, district, mukhtar name | Both |
+| 5 — Biometric Capture | Face + fingerprint simulation | NEW only |
+| 6 — Review & Submit | Read-only summary, fee acknowledgment | Both |
 
-| Step                  | Content                                    | Shown For                         |
-| --------------------- | ------------------------------------------ | --------------------------------- |
-| 1 — Type Selection    | New Passport / Passport Renewal            | Both                              |
-| 2 — Passport Details  | Validity, fee calculation                  | Both                              |
-| 3 — Document Upload   | Identity doc, passport photo, old passport | Both (old passport: renewal only) |
-| 4 — Mukhtar Details   | Address, district, mukhtar name            | Both                              |
-| 5 — Biometric Capture | Face + fingerprint simulation              | NEW only                          |
-| 6 — Review & Submit   | Read-only summary, fee acknowledgment      | Both                              |
-
-### AI Assistant Widget (NFR-USA-04):
-
-- Floating button fixed bottom-right on all citizen pages (not on mukhtar/officer routes)
-- Powered by Anthropic API (`claude-sonnet-4-20250514`)
-- System prompt scoped to NPIS passport guidance only
-- Features: conversation history (last 10 messages), typing indicator, 3 quick-reply suggestions on first open, bilingual (Arabic/English), 5-second timeout with fallback message
-- TODO: Consider moving API call server-side to protect key before production
-
-### Dev Status Panel (Development Bridge for FR-20–FR-27):
-
-- Visible only when `import.meta.env.DEV === true` — never ships to production
-- Position: fixed bottom-left
-- Features: application selector dropdown, status override buttons (PENDING_REVIEW / VERIFIED / MUKHTAR_SIGNED / PROCESSED / RESUBMISSION_REQUIRED / DELIVERED), payment status override (UNPAID / Paid / Failed), "Reload Dashboard", "Clear All Applications", "Re-seed Test Data"
-- Purpose: bridges the absent ML verification pipeline so Mukhtar and GS Officer queues can be populated during development
+### Dev Status Panel:
+- Visible only in dev mode (`import.meta.env.DEV === true`)
+- Status overrides: PENDING_REVIEW / VERIFIED / MUKHTAR_SIGNED / PROCESSED / RESUBMISSION_REQUIRED / DELIVERED
+- Payment status override: UNPAID / Paid / Failed
+- "Reload Dashboard", "Clear All Applications", "Re-seed Test Data"
 
 ---
 
 ## Session 8 — Citizen Portal Completion (Priority 1)
 
 ### SRS Requirements Covered:
-
 - FR-05.1: Account lockout countdown UI
 - FR-09: Fee acknowledgment checkbox
 - FR-22: Resubmission guidance with per-document rejection reasons
@@ -501,13 +358,11 @@ Decouple all components from direct localStorage access. All data access now goe
 - NFR-USA-02, NFR-USA-03: Usability improvements
 
 ### Files Created:
-
 - `src/pages/PreApplicationChecklistPage.tsx` — pre-application document checklist
 - `src/pages/CitizenProfilePage.tsx` — citizen profile view and edit
 
 ### Files Modified:
-
-- `CitizenDashboard.tsx` — notification bell with badge, profile link, application filter/sort toolbar, "Apply" routes to checklist
+- `CitizenDashboard.tsx` — notification bell with badge, profile link, application filter/sort toolbar
 - `CitizenLoginPage.tsx` — account lockout countdown panel
 - `authService.ts` — lockAccount, isAccountLocked, getRemainingLockTime
 - `notificationService.ts` — markAsRead, markAllAsRead, getUnreadCount
@@ -518,108 +373,324 @@ Decouple all components from direct localStorage access. All data access now goe
 - `App.tsx` — added /application/checklist and /citizen/profile routes
 
 ### Routes Added:
-
-| Route                    | Component                                        |
-| ------------------------ | ------------------------------------------------ |
+| Route | Component |
+|---|---|
 | `/application/checklist` | PreApplicationChecklistPage (protected, citizen) |
-| `/citizen/profile`       | CitizenProfilePage (protected, citizen)          |
+| `/citizen/profile` | CitizenProfilePage (protected, citizen) |
 
-### Citizen Portal Features Completed:
+**Commit:** `feat: Complete citizen portal — notifications, profile, lockout, resubmission reasons, fee acknowledgment (Session 8)`
 
-- Notification bell added to the Citizen Dashboard header with unread badge support
-- Notification Center UI added with read/unread state handling
-- Profile link added from the dashboard to the citizen profile page
-- Citizen profile page added for viewing and editing citizen contact/profile information
-- Application dashboard improved with status filtering and date sorting
-- "Apply" action now routes through the pre-application checklist before the application form
-- Login lockout state now displays a countdown panel showing when the citizen can retry
-- Document resubmission page now shows per-document rejection reasons and acceptance criteria
-- Accepted documents are visually indicated so the citizen knows which fields do not need correction
-- Step 6 of the application form now requires explicit fee acknowledgment before submission
-- Dev Status Panel now seeds mock rejection reasons when setting an application to `RESUBMISSION_REQUIRED`
+---
+
+## Session 9 — Mukhtar & GS Officer Dashboards — Full Build (Phase 9)
+
+### Context:
+Session 4 scaffolded these dashboards as non-interactive placeholders. This session replaced them entirely with fully functional implementations.
+
+### SRS Requirements Covered:
+- FR-12 to FR-16: Mukhtar authentication, queue, citizen data display, e-signature, status update
+- FR-17 to FR-19: GS Officer authentication, approval queue, final approval
+- FR-22, FR-23: Resubmission trigger from Mukhtar with rejection reasons and citizen notification
+
+### Files Rebuilt:
+- `src/pages/MukhtarDashboard.tsx` — full implementation replacing the Session 4 placeholder
+- `src/pages/OfficerDashboard.tsx` — full implementation replacing the Session 4 placeholder
+
+### Files Modified:
+- `src/services/mukhtarService.ts` — `getPendingApplications()`, `signApplication()`, `requestResubmission()` fully implemented
+- `src/services/officerService.ts` — `getPendingApplications()`, `approveApplication()`, `cancelOldPassport()` fully implemented
+- `src/services/notificationService.ts` — confirmed `create()` function present and used by all staff actions
+- `src/utils/seedTestData.ts` — seeded VERIFIED and MUKHTAR_SIGNED test applications for staff queue testing
+
+### Mukhtar Dashboard Features:
+- Pending queue filtered by `currentStatus === 'VERIFIED'`
+- Loading state (skeleton/spinner) and empty state with friendly message
+- Each card: tracking number, applicant name, type, submission date, district
+- Detail drawer (slide-in): full citizen data, document thumbnails, application summary
+- **Approve & Sign** flow:
+  - Confirmation modal before signing
+  - 5% random cryptographic signature failure simulation
+  - On success: `currentStatus` → `MUKHTAR_SIGNED`, `mukhtar_signature_<applicationId>` written with timestamp
+  - Citizen notification created: "Your application has been signed by your Mukhtar"
+  - Marked `// TODO: Remove notification call when backend connected — NestJS handles server-side`
+  - On failure: error toast, no state change, no partial corruption
+- **Request Resubmission** flow:
+  - Modal with per-document checkboxes (Identity Document, Passport Photo, Old Passport for renewals) and rejection reason textarea per document
+  - Populates `resubmissionReasons` on the application record matching the shape `DocumentResubmissionPage` expects
+  - `currentStatus` → `RESUBMISSION_REQUIRED`
+  - Citizen notification created (FR-23)
+- All toasts auto-dismiss after 3 seconds
+
+### GS Officer Dashboard Features:
+- Pending queue filtered by `currentStatus === 'MUKHTAR_SIGNED'`
+- Cards show Mukhtar signature timestamp
+- Detail panel: full application data, Mukhtar signature timestamp and name
+- **Final Approval** (renamed "Approve for Issuance" in Session 11):
+  - For NEW: single confirmation modal → `currentStatus` → `PROCESSED`
+  - For RENEWAL at this stage: old passport cancellation modal removed (moved to ISSUED in Session 11)
+  - Citizen notification created on approval
+- All notification side-effects marked with TODO for NestJS removal
+
+### Test Applications Seeded:
+| User | Type | Status | Tracking |
+|---|---|---|---|
+| Sara Mansour | NEW | VERIFIED | NPIS-2026-000004 |
+| Sara Mansour | NEW | VERIFIED | NPIS-2026-000005 |
+| Sara Mansour | RENEWAL | VERIFIED | NPIS-2026-000006 |
+| Sara Mansour | NEW | MUKHTAR_SIGNED | NPIS-2026-000007 |
+| Sara Mansour | RENEWAL | MUKHTAR_SIGNED | NPIS-2026-000008 |
+
+**Commit:** `feat: Build functional Mukhtar and GS Officer dashboards (Phase 9)`
+
+---
+
+## Session 10 — Citizen UX Enhancements (Phase 10)
+
+### Features Added:
+- Application receipt download (PDF, client-side via jsPDF)
+- Passport expiry reminder banners on Citizen Dashboard
+- Renewal pre-selection fix from expiry banner
+
+### Files Created:
+- `src/services/receiptService.ts` — `generateReceipt(applicationId)` builds and downloads PDF via jsPDF
+
+### Files Modified:
+- `PaymentPage.tsx` — countdown extended from 3 to 5 seconds; pauses on receipt download; switches to manual "Continue" after download; always-visible "Go to Dashboard" button
+- `CitizenDashboard.tsx` — "Download Receipt" button on paid application cards; expiry reminder banners at top of dashboard
+- `applicationService.ts` — added `getExpiringPassports()` and `dismissExpiryBanner()` (later moved to `passportService.ts` in Session 11)
+- `PreApplicationChecklistPage.tsx` — reads `?type` query param, forwards to application form, updates checklist copy for renewal-specific document requirements
+- `NewPassportApplicationPage.tsx` — reads `?type` param on mount, pre-selects application type, skips Step 1 when param present; Back from Step 2 returns to checklist/dashboard not Step 1
+- `seedTestData.ts` — three DELIVERED applications seeded under Sara Mansour covering all three expiry severity tiers
+
+### Receipt Content:
+PDF includes tracking number, applicant name, application type, validity, submission date, fee amount, payment status, payment reference (gatewayRef), payment date, current status, and footer. Filename: `NPIS_Receipt_<trackingNumber>.pdf`. Marked TODO for server-generated signed PDF on backend integration.
+
+### Expiry Reminder Banners:
+Three severity tiers based on time until expiry:
+- **Info** (6–3 months): Blue, dismissible
+- **Warning** (3–1 month): Amber, not dismissible
+- **Critical** (<1 month / expired): Red, not dismissible
+
+Banners render at top of dashboard, stacked critical → warning → info. Each has a "Renew Now" button routing to `/application/checklist?type=RENEWAL&fromExpiry=<applicationId>`. Info-tier dismissal stored per passport; clears automatically if severity escalates.
+
+### Renewal Pre-Selection Fix:
+- "Renew Now" routes to `/application/checklist?type=RENEWAL&fromExpiry=<applicationId>`
+- Checklist forwards `?type=RENEWAL` to `/application/new?type=RENEWAL`
+- Form skips Step 1 and opens at Step 2 with RENEWAL pre-selected
+- Back button from pre-selected Step 2 goes to checklist/dashboard, not Step 1
+- Direct `/application/new` navigation without param is unchanged
+
+**Commit:** `feat: Citizen UX enhancements — receipt download, expiry reminders, and renewal pre-selection (Phase 10)`
+
+---
+
+## Session 11 — Passport Entity, ISSUED State & Expiry Banner Wiring (Phase 11)
+
+### Context:
+This session introduced the most significant data model addition since Session 3. A new `Passport` entity was introduced as an independent record, decoupled from the application. A new `ISSUED` status was added to the application state machine between `PROCESSED` and `DELIVERED`. The GS Officer workflow was restructured into two distinct stages. The expiry banner data source was re-wired from application records to passport records.
+
+### Architectural Decisions:
+- **Passport record created at ISSUED** by the GS Officer, who enters the booklet number manually. All other fields derived automatically.
+- **Old passport cancelled at ISSUED** for renewals — simultaneously with new passport creation. Not at PROCESSED, not at DELIVERED. This is a deliberate deviation from FR-19 (which places cancellation at PROCESSED) justified by real-world accuracy: the old passport should not be cancelled before the new one physically exists.
+- **LibanPost manifest trigger (FR-31) moved from PROCESSED to ISSUED** — it makes more sense to notify LibanPost once the passport physically exists, not merely when it is approved for printing.
+- **DELIVERED is terminal and automated** — triggered by LibanPost callback (mocked via Dev Panel). No Officer action at DELIVERED.
+- **Expiry banner reads from Passport records**, not application records.
+
+### Updated Application State Machine:
+```
+PENDING_REVIEW → VERIFIED → MUKHTAR_SIGNED → PROCESSED → ISSUED → DELIVERED
+```
+
+| Status | Triggered By | Side Effects |
+|---|---|---|
+| PENDING_REVIEW | Citizen submits | Payment initiated |
+| VERIFIED | ML system (Dev Panel) | Routed to Mukhtar queue |
+| MUKHTAR_SIGNED | Mukhtar signs | Citizen notified, routed to Officer queue |
+| PROCESSED | GS Officer (Queue 1) | Approved for printing, no passport data yet |
+| ISSUED | GS Officer (Queue 2) | Passport record created, old passport cancelled (renewal), LibanPost manifest sent, citizen notified |
+| DELIVERED | LibanPost callback (Dev Panel) | Application closed, citizen notified |
+
+### Files Created:
+- `src/types/passport.ts` — Passport interface
+- `src/services/passportService.ts` — full passport CRUD and expiry logic
+
+### Files Modified:
+- `src/services/applicationService.ts` — added `'ISSUED'` to currentStatus union; added `renewingPassportId: string | null` to PassportApplication interface; removed `getExpiringPassports()` and `dismissExpiryBanner()` (moved to passportService)
+- `src/pages/OfficerDashboard.tsx` — restructured into two-tab layout
+- `src/pages/ApplicationStatusPage.tsx` — expanded timeline to 7 stages; updated estimated completion table
+- `src/pages/NewPassportApplicationPage.tsx` — resolves `fromExpiry` param to `passportId`, writes `renewingPassportId` on renewal applications
+- `src/pages/CitizenDashboard.tsx` — expiry banner re-wired to `passportService.getExpiringPassports()`
+- `src/components/DevStatusPanel.tsx` — ISSUED override prompts for booklet number and creates passport record; DELIVERED override safe-creates passport if absent; removed `deliveredDate` override from Session 10
+- `src/utils/seedTestData.ts` — passport records added for Sara Mansour's three near-expiry DELIVERED applications; `deliveredDate` field removed from those applications
+
+### Passport Interface:
+```typescript
+interface Passport {
+  passportId: string;           // LBPP-<8 digits>
+  userId: string;
+  sourceApplicationId: string;
+  bookletNumber: string;        // LB-XXXXXXX, entered by Officer
+  status: 'ACTIVE' | 'CANCELLED';
+  issuedAt: string;             // ISO timestamp — when Officer marks ISSUED
+  expiresAt: string;            // computed: issuedAt + passportValidity years
+  cancelledAt: string | null;
+  cancelledByApplicationId: string | null;
+}
+```
+
+### PassportApplication Interface (updated):
+```typescript
+interface PassportApplication {
+  applicationId: string;
+  userId: string;
+  applicationType: 'NEW' | 'RENEWAL';
+  currentStatus: 'PENDING_REVIEW' | 'VERIFIED' | 'MUKHTAR_SIGNED' |
+                 'PROCESSED' | 'ISSUED' | 'RESUBMISSION_REQUIRED' | 'DELIVERED';
+  submissionDate: string;
+  trackingNumber: string;
+  passportValidity: 5 | 10;
+  feeAmount: number;
+  paymentStatus: 'UNPAID' | 'Paid' | 'Failed';
+  renewingPassportId: string | null;  // passportId of passport being renewed
+  resubmissionReasons: { [documentKey: string]: string } | null;
+  documents: {
+    identityDocument: string | null;
+    passportPhoto: string | null;
+    oldPassport: string | null;
+  };
+  mukhtarFormData: {
+    address: string;
+    district: string;
+    mukhtarName: string;
+  };
+  biometricCaptured: boolean;
+}
+```
+
+### passportService.ts Functions:
+| Function | Purpose | Future Endpoint |
+|---|---|---|
+| `createPassport()` | Creates ACTIVE passport record at ISSUED | POST /api/passports |
+| `getPassportsByUser()` | Returns all passport records for a citizen | GET /api/passports?userId= |
+| `getActivePassport()` | Returns single ACTIVE passport or null | GET /api/passports/active?userId= |
+| `cancelPassport()` | Sets status → CANCELLED with timestamp | PATCH /api/passports/:id/cancel |
+| `getExpiringPassports()` | Returns ACTIVE passports expiring within 6 months with severity and suppression logic | GET /api/passports/expiring?userId= |
+| `dismissExpiryBanner()` | Writes dismissal flag per passport per severity | POST /api/passports/:id/dismiss-expiry-banner |
+
+### localStorage Key Added:
+- `passports_<userId>` — array of Passport records per citizen
+
+### GS Officer Dashboard — Two-Tab Structure:
+**Tab 1 — "Pending Approval"** (MUKHTAR_SIGNED queue):
+- Renamed action: "Approve for Issuance" (was "Final Approval")
+- On confirm: `currentStatus` → `PROCESSED`, citizen notified
+- No passport creation, no cancellation at this stage
+
+**Tab 2 — "Ready for Issuance"** (PROCESSED queue):
+- Booklet number entry form with format validation (LB-XXXXXXX)
+- For RENEWAL: warning box before issuing ("This will cancel the passport on file")
+- On confirm:
+  1. `passportService.createPassport()` called
+  2. For RENEWAL: `passportService.cancelPassport()` called on `renewingPassportId`
+  3. `currentStatus` → `ISSUED`
+  4. LibanPost manifest mock log: `console.log('LibanPost manifest sent:', {...})` — marked TODO FR-31
+  5. Citizen notification created (different message for NEW vs RENEWAL)
+- Count badges on both tab headers
+
+### Application Status Timeline — Updated (7 Stages):
+1. Application Submitted
+2. Documents Under Review
+3. Verified by System
+4. Mukhtar Signed
+5. Approved for Printing *(was "Processed for Issuance")*
+6. Passport Issued *(new)*
+7. Delivered
+
+### Updated Estimated Completion Table (FR-11):
+| Status | Estimate Shown |
+|---|---|
+| PENDING_REVIEW | 5–7 business days |
+| VERIFIED | 3–5 business days |
+| MUKHTAR_SIGNED | 2–3 business days |
+| PROCESSED | 1–2 business days |
+| ISSUED | Passport issued — awaiting delivery |
+| DELIVERED | Completed |
+| RESUBMISSION_REQUIRED | On hold — awaiting resubmission |
+
+### Expiry Banner Suppression Logic:
+Banner for a passport is suppressed when ALL of:
+- A renewal application exists with `renewingPassportId === passportId`
+- That renewal's `currentStatus` is one of: PENDING_REVIEW, VERIFIED, MUKHTAR_SIGNED, PROCESSED, ISSUED
+- That renewal's `paymentStatus` is `'Paid'`
+
+Banner reappears when:
+- Renewal `currentStatus` is `RESUBMISSION_REQUIRED`
+- Renewal `paymentStatus` is `'UNPAID'` or `'Failed'`
+- No renewal references this passport
+
+**Commit:** *(pending — Session 11 just completed)*
+
+---
 
 ## Current Application Status Summary
 
 ### What's Complete:
-
 - ✅ Citizen signup with OTP mobile validation UI (mock SMS)
 - ✅ Citizen login and logout
-- ✅ Account lockout countdown UI
+- ✅ Account lockout countdown UI (FR-05.1)
 - ✅ Identity verification (KYC) flow — pending, accepted, rejected, resubmission
 - ✅ Role-based routing and protected routes
 - ✅ Citizen profile page — view and edit profile/contact information
-- ✅ Pre-application document checklist before starting application
+- ✅ Pre-application document checklist — generic and renewal-specific variants
 - ✅ Multi-step passport application form — 6 steps (NEW) / 5 steps (RENEWAL)
+- ✅ Renewal pre-selection from expiry banner — skips Step 1, Back button safe
 - ✅ Fee acknowledgment checkbox on Step 6
 - ✅ Document upload with drag-and-drop, preview, validation
 - ✅ Biometric capture UI — manual trigger, ML feedback simulation, 3-second stability timer, face + fingerprints
 - ✅ Payment flow — dedicated PaymentPage, CashPlus simulation (success/fail/unavailable), FR-30 timeout auto-fail
-- ✅ Application status timeline with estimated completion
+- ✅ Payment countdown extended to 5 seconds; pauses on receipt download
+- ✅ Application receipt download (jsPDF, client-side) — on PaymentPage success and dashboard cards
+- ✅ Application status timeline — 7 stages including new ISSUED stage
 - ✅ Document resubmission flow with per-document rejection reasons and acceptance criteria
-- ✅ Notification banners for action-required applications (resubmission, payment)
+- ✅ Notification banners for action-required applications (resubmission, payment, expiry)
 - ✅ Notification Center UI — bell badge, read/unread state, mark as read, mark all as read
 - ✅ Application filtering/sorting on CitizenDashboard
-- ✅ Mukhtar Dashboard — pending queue, detail drawer, e-signature, resubmission trigger
-- ✅ GS Officer Dashboard — approval queue, final approval, old passport cancellation
+- ✅ Passport expiry reminder banners — 3 severity tiers, dismissal, suppression during active renewal
+- ✅ Mukhtar Dashboard — VERIFIED queue, detail drawer, e-signature with 5% failure sim, resubmission trigger with per-document reasons, citizen notifications
+- ✅ GS Officer Dashboard — two-tab layout (MUKHTAR_SIGNED → PROCESSED → ISSUED), booklet number entry, passport record creation, old passport cancellation for renewals, LibanPost mock log
+- ✅ Passport entity — independent record per issued passport, drives expiry logic
+- ✅ ISSUED status — new state between PROCESSED and DELIVERED
 - ✅ AI assistant floating chat widget (Anthropic API)
-- ✅ Developer status override panel (dev mode only)
+- ✅ Developer status override panel (dev mode only) — includes ISSUED override with passport creation
 - ✅ Full API service layer with mock implementations and TODO markers
-- ✅ Test data seeding for all user/application/payment states
+- ✅ Test data seeding for all user/application/payment/passport states
 - ✅ Routing fixed — reload, back button, no unload violations
-- ✅ Priority 1 Citizen Portal Completion is done
 
 ### What's Not Yet Built:
-
-- ⬜ Mukhtar Dashboard end-to-end verification/fix — queue loading, detail drawer, signing, and resubmission flow need full testing after citizen-side completion
-- ⬜ Application receipt download — no printable/downloadable confirmation after submission and payment (UX)
-- ⬜ Passport expiry reminder — no banner on dashboard when delivered passport nears expiry (UX)
 - ⬜ ML document verification pipeline — automated status transitions FR-20 to FR-27 (deferred; Dev Panel bridges gap)
-- ⬜ LibanPost delivery integration — FR-31 to FR-33 (deferred)
-- ⬜ Real backend integration — replace all localStorage mocks with API calls through `apiClient.ts`, connect Supabase auth and database, wire ML pipeline
-- ⬜ OTP SMS gateway — UI complete, real SMS transmission not connected (FR-02 backend)
+- ⬜ LibanPost delivery integration — FR-31 to FR-33 (deferred; mocked as console.log at ISSUED)
+- ⬜ Real backend integration — replace all localStorage mocks with API calls through `apiClient.ts`
+- ⬜ OTP SMS gateway — UI complete, real SMS not connected (FR-02 backend)
 - ⬜ Real CashPlus gateway — UI complete, real payment not connected (FR-09 backend)
 - ⬜ Real biometric ML — UI complete, FaceNet/U-Net inference not connected (FR-07 backend)
+- ⬜ renewingPassportId for renewals started outside the expiry banner (v1 limitation — flagged in code)
+- ⬜ Multi-passport UI for citizens with more than one active passport (v1 simplification — flagged in code)
 
 ---
 
 ## Next Steps (Priority Order)
 
-### 1. Mukhtar Dashboard Fix & Verification — High Priority
+### 1. Real Backend Integration — When Team API Stabilizes
+Follow the sequence in Backend Integration Notes section 10. All frontend service functions have TODO markers. The recommended order is: Auth → Identity Verification → Application CRUD → File Uploads → Payment → Mukhtar/Officer flows → Notifications → ML Pipeline → LibanPost.
 
-Priority 1 Citizen Portal Completion is now done. The next priority is to verify and fix the Mukhtar dashboard end-to-end:
-
-- Confirm login flow works end-to-end (mukhtar@test.com / test123 → `/mukhtar/dashboard`)
-- Verify VERIFIED applications appear in the queue
-- Test approve & sign flow → status transitions to MUKHTAR_SIGNED
-- Test resubmission trigger → status transitions to RESUBMISSION_REQUIRED with seeded rejection reasons
-- Confirm citizen receives/reads the generated notification after Mukhtar action
-- Use Dev Status Panel to seed VERIFIED and RESUBMISSION_REQUIRED applications for testing
-
-### 2. Remaining Citizen UX Enhancements — Medium Priority
-
-- **Application Receipt Download**: generate and offer a downloadable PDF receipt after successful submission and payment (UX)
-- **Passport Expiry Reminder**: banner on dashboard cards with status DELIVERED when expiry is within 6 months (UX)
-
-### 3. Real Backend Integration — When Team API Stabilizes
-
-- Replace all TODO-marked service functions with real API calls through `apiClient.ts`
-- Connect Supabase auth and database
-- Wire real SMS OTP gateway (FR-02)
-- Wire real CashPlus payment gateway (FR-09, FR-28–FR-30)
-- Wire ML document verification pipeline (FR-20–FR-27)
-- Wire real biometric ML inference (FR-07)
-- Wire LibanPost delivery integration (FR-31–FR-33)
-
-### 4. ML Document Verification (Deferred)
-
+### 2. ML Document Verification (Deferred)
 - Automated status transitions: PENDING_REVIEW → VERIFIED or RESUBMISSION_REQUIRED (FR-20–FR-22)
 - Mukhtar routing by jurisdiction (FR-24)
 - Post-signature integrity check (FR-25–FR-26)
 - Branch processing speed calculation (FR-27)
 
-### 5. LibanPost Delivery Integration (Deferred)
-
-- Delivery manifest transmission on PROCESSED status (FR-31)
+### 3. LibanPost Delivery Integration (Deferred)
+- Delivery manifest transmission on ISSUED status (FR-31) — trigger point updated from PROCESSED
 - Citizen delivery notification (FR-32)
 - Delivery/swap closure callback → DELIVERED or Delivery Failed (FR-33)
 
@@ -627,112 +698,97 @@ Priority 1 Citizen Portal Completion is now done. The next priority is to verify
 
 ## ⚠️ IMPORTANT — Backend Integration Notes (NestJS)
 
-These are gotchas to address when wiring the frontend to the NestJS backend. The current frontend is architecturally sound (service layer with TODO markers, components decoupled from localStorage), but the following gaps will cause issues if not handled during integration. Read this section before starting backend integration.
+These are gotchas to address when wiring the frontend to the NestJS backend. Read this section before starting backend integration.
 
-### 1. Simulated Backend Side-Effects Are Missing
+### 1. Simulated Backend Side-Effects Are Present and Must Be Removed
+All staff-side state transitions (Mukhtar sign, Mukhtar resubmission request, Officer PROCESSED approval, Officer ISSUED passport creation) now create citizen notifications via `notificationService.create()`. These calls are marked:
+```
+// TODO: Remove when backend is connected — NestJS handles notification creation server-side
+```
+Search for this comment and delete every occurrence during integration. The backend will handle notifications via service layer, event emitters, or database triggers.
 
-The mock service functions update state but do not simulate the side-effects that the NestJS backend will perform automatically. The most visible example: when an application status changes (e.g., Mukhtar signs an application), the real backend will create a notification record in the same transaction. Currently, the frontend mock changes the status but does **not** create a notification, so the Notification Center looks broken end-to-end even though the wiring is correct.
+### 2. New Passport Entity — Requires Backend Table
+The frontend introduced a `Passport` entity stored under `passports_<userId>` in localStorage. The backend needs a dedicated `Passport` table (or equivalent) with the following fields:
+- `passportId` (string, generated)
+- `userId` (FK to User)
+- `sourceApplicationId` (FK to Application)
+- `bookletNumber` (string, entered by Officer)
+- `status` (enum: ACTIVE / CANCELLED)
+- `issuedAt` (timestamp)
+- `expiresAt` (timestamp, computed server-side)
+- `cancelledAt` (timestamp, nullable)
+- `cancelledByApplicationId` (FK to Application, nullable)
 
-**Action during integration:**
+This maps to the SRS section 3.1 entity list, which implies this record exists but does not name it explicitly. The `Old Passport Cancellation` entity in SRS 3.1 maps to the `cancelledAt` / `cancelledByApplicationId` fields on this record.
 
-- Identify all places in mock services where a status change should trigger a backend side-effect (notification creation, audit log entry, payment record update, etc.).
-- During mock development, optionally add simulated side-effect calls (e.g., `notificationService.create(...)` after `applicationService.updateStatus(...)`) to make the UI demonstrable.
-- When connecting to NestJS, **remove** these simulated side-effect calls — the backend handles them via NestJS service layer, event emitters, or database triggers. Mark such calls with `// TODO: Remove when backend is connected — NestJS handles this server-side`.
+### 3. ISSUED Is a New Status Not in the SRS
+The `ISSUED` status was added as a deliberate extension of FR-18. The SRS defines PROCESSED as the terminal Officer action. The frontend team added ISSUED to represent the moment the physical booklet is produced and handed to LibanPost, which is distinct from PROCESSED (approved for printing). The backend state machine must include ISSUED as a valid status between PROCESSED and DELIVERED.
 
-### 2. Async/Sync Consistency
+Valid status transitions:
+```
+PENDING_REVIEW → VERIFIED → MUKHTAR_SIGNED → PROCESSED → ISSUED → DELIVERED
+PENDING_REVIEW → RESUBMISSION_REQUIRED → PENDING_REVIEW (resubmission loop)
+```
 
-All service functions are already declared `async` and return Promises, but localStorage operations are synchronous under the hood. When connected to NestJS via HTTP, the real latency will surface. Audit every service caller to confirm `await` is used. Any synchronous-style call (`const apps = applicationService.getAll()` without `await`) will break and return a Promise object instead of data.
+### 4. Old Passport Cancellation Moved to ISSUED (Deviation from FR-19)
+FR-19 places old passport cancellation at the Officer's final approval action (PROCESSED). The frontend team moved this to ISSUED — the moment the new passport physically exists. The backend should implement cancellation at ISSUED, not at PROCESSED. This is a justified deviation: cancelling the old passport at PROCESSED creates a window where the citizen has no valid passport if delivery fails.
 
-### 3. Data Shape Drift Between Frontend and NestJS DTOs
+### 5. LibanPost Manifest Trigger Moved to ISSUED (Deviation from FR-31)
+FR-31 places the LibanPost manifest transmission at PROCESSED. The frontend team moved this to ISSUED. The backend should trigger the LibanPost API call when status becomes ISSUED, not PROCESSED. Rationale: LibanPost should only receive the manifest once the physical passport exists and is ready for collection.
 
-The frontend currently uses TypeScript interfaces like `PassportApplication` with fields like `applicationId`, `currentStatus`, `submissionDate`. NestJS will likely return DTOs with different shapes — possibly snake_case fields, numeric IDs instead of strings, different enum casing, ISO timestamps in different formats, nested relations rather than flat objects.
+### 6. renewingPassportId on Application
+The `PassportApplication` entity now carries `renewingPassportId: string | null`. This links a renewal application to the specific passport record being renewed. The backend Application table needs this FK column. It is null for NEW applications and for renewals started outside the expiry banner flow (v1 limitation). The backend may want to enforce this FK more strictly or populate it via a lookup during application creation.
 
-**Action during integration:**
+### 7. Async/Sync Consistency
+All service functions are async and return Promises. localStorage operations are synchronous under the hood. When connected to NestJS via HTTP, real latency will surface. Audit every service caller to confirm `await` is used before integration.
 
-- Once the NestJS team provides the OpenAPI/Swagger spec, create a `src/types/api.ts` file with interfaces matching the NestJS DTOs exactly.
-- Build adapter functions inside each service (e.g., `mapApiApplicationToFrontend(dto)`) that translate between the API response shape and the existing frontend `PassportApplication` interface.
-- Components stay untouched — only the service internals change.
+### 8. Data Shape Drift Between Frontend and NestJS DTOs
+The frontend uses camelCase TypeScript interfaces. NestJS may return snake_case DTOs, numeric IDs, or differently shaped nested objects. Build adapter functions inside each service (`mapApiApplicationToFrontend(dto)`, `mapApiPassportToFrontend(dto)`) to translate shapes. Components stay untouched — only service internals change.
 
-### 4. localStorage-Only Keys With No Backend Equivalent
+### 9. localStorage-Only Keys With No Backend Equivalent
+These keys exist only as frontend mock plumbing and have no backend counterpart:
+- `passports_<userId>` — backend has a Passport table
+- `mukhtar_signature_<applicationId>` — backend stores signatures via a Signature entity
+- `payment_<applicationId>` — backend has a Payment table
+- `otp_<mobile>` — OTP is server-side only
+- `kyc_status_<userId>`, `identity_data_<userId>` — backend stores on User/CitizenProfile entity
+- `expiry_banner_dismissed_<passportId>` — backend may store as a user preference or ignore (UI-only concern)
 
-Several localStorage keys exist purely as frontend mock plumbing and will not exist server-side:
+Grep for all localStorage keys outside `src/services/`. Any direct access in a component is a bug.
 
-- `mukhtar_signature_<applicationId>` — backend stores signatures via a proper Signature entity tied to the Application
-- `cancelled_passport_<applicationId>` — backend will use the `Old Passport Cancellation` entity defined in SRS section 3.1
-- `payment_<applicationId>` — backend has a dedicated `Payment` table
-- `otp_<mobile>` — OTP is server-side only; frontend never sees the code, only sends/validates via API
-- `kyc_status_<userId>`, `identity_data_<userId>` — backend stores these on the User/CitizenProfile entity
+### 10. Authentication Token Handling
+Current session is just a userId in localStorage. NestJS will use JWT. Confirm `apiClient.ts` has interceptor logic to attach `Authorization: Bearer <token>`. Handle 401 globally — clear token and redirect to `/`.
 
-**Action during integration:** Grep for all localStorage keys outside `src/services/`. Any direct access in a component is a bug — it must go through a service function so the backend swap is transparent.
+### 11. File Uploads — Significant Interface Change
+Documents are currently stored as base64 strings. The real flow: upload via multipart/form-data → NestJS returns URL → submit application with URL. The `documents` field will hold URLs instead of base64 strings. `<img src={...}>` works for both, so component changes are minimal.
 
-### 5. Authentication Token Handling
+### 12. Simulated Outcomes Must Be Removed
+Search for `Math.random()` across the codebase before deploying:
+- Payment simulation (75/15/10 split) in `paymentService.ts`
+- Mukhtar signature 5% failure in `mukhtarService.ts`
+- Biometric ML feedback ~30% ALL CLEAR in `BiometricCaptureWidget.tsx`
+- OTP generation and `console.log` in `authService.ts`
 
-The current "session" is just a userId in localStorage. NestJS will use JWT (likely with `@nestjs/jwt` and Passport strategy). The login response will return an `access_token` (and possibly a `refresh_token`).
+### 13. Order of Backend Integration
+1. Auth — login, signup, OTP, JWT flow
+2. Identity verification — KYC submission and status
+3. Application CRUD — create, list, get by ID, update status (ensure ISSUED is a valid status)
+4. Passport CRUD — create, cancel, list by user, expiry query
+5. File uploads — switch from base64 to multipart/URL
+6. Payment integration — real CashPlus gateway
+7. Mukhtar and Officer flows — role guards, signature, passport issuance
+8. Notifications — polling first, WebSockets later
+9. ML pipeline — biometric inference, document verification
+10. LibanPost integration — delivery manifest at ISSUED, callbacks for DELIVERED
 
-**Action during integration:**
+Each step should keep the rest of the app working in mock mode via feature flags (`VITE_USE_MOCK_AUTH=true` etc.) so partial integration doesn't break the demo.
 
-- Confirm `apiClient.ts` has interceptor logic to attach `Authorization: Bearer <token>` to every request.
-- Store the JWT in localStorage (or sessionStorage) under a clear key like `npis_access_token`.
-- Handle 401 responses globally — clear the token and redirect to `/`.
-- If NestJS uses refresh tokens, implement the refresh flow in `apiClient.ts` interceptors.
-- Consider role-based guards on the backend (`@Roles('mukhtar')` decorators on NestJS controllers) — the frontend `ProtectedRoute` component will still work, but the backend is the actual security boundary.
+### 14. Real-Time Notifications
+Notification center currently refreshes on open/reload only. For production: start with polling every 30–60 seconds. Upgrade to WebSockets (`@nestjs/websockets`, `@WebSocketGateway`) for live push. The Notification Center UI supports both — only the data source changes.
 
-### 6. File Uploads — Significant Interface Change
-
-Documents are currently stored as base64 strings in localStorage. The real flow with NestJS will be:
-
-1. Frontend uploads file via `multipart/form-data` to a NestJS endpoint (likely using `@nestjs/platform-express` with `FileInterceptor` and Multer).
-2. NestJS stores the file (local disk, S3, or similar) and returns a URL or storage key.
-3. Frontend submits the application with the URL/key, not the file content.
-
-**Action during integration:**
-
-- `applicationService.create()` will change from "store the entire file in the application object" to "upload files first, get URLs, then submit application with URLs."
-- Document upload progress, retry logic, and file size limits become real concerns (currently mocked).
-- The `documents` field on `PassportApplication` will hold URLs instead of base64 strings — components like the document preview will need to handle URLs (e.g., `<img src={app.documents.passportPhoto} />` works for both, so this is mostly transparent).
-
-### 7. Real-Time Notifications
-
-The notification center currently refreshes only when the user opens it or reloads the page. For production-grade UX where status changes appear live (e.g., a Mukhtar signs and the citizen sees the notification within seconds), consider:
-
-- **Polling** — simplest, frontend calls `notificationService.getUnread()` every 30–60 seconds. NestJS handles this fine without extra infrastructure.
-- **WebSockets** — NestJS has first-class WebSocket support via `@nestjs/websockets` and `@WebSocketGateway`. The frontend would connect on login and receive push notifications. More complex but better UX.
-
-Not blocking for v1, but plan for it. The current Notification Center UI works either way — only the data source changes.
-
-### 8. CORS and Environment Configuration
-
-NestJS will need explicit CORS configuration to accept requests from the Vite dev server (`http://localhost:5173`) and the production frontend domain. Use `app.enableCors({ origin: [...] })` in `main.ts` on the NestJS side.
-
-The frontend's `apiClient.ts` should read the API base URL from `import.meta.env.VITE_API_BASE_URL` so dev/staging/prod can point to different NestJS instances without code changes.
-
-### 9. Simulated Outcomes Must Be Removed
-
-Several mock flows use weighted random outcomes that need to be deleted on integration:
-
-- Payment simulation in `paymentService.ts` (75% success / 15% fail / 10% gateway unavailable) — replace with real CashPlus callback handling
-- Mukhtar signature 5% random failure in `mukhtarService.ts` — replace with real cryptographic signing
-- Biometric ML feedback "ALL CLEAR ~30% probability" in `BiometricCaptureWidget.tsx` — replace with real ML inference results from the backend
-- OTP code generation and `console.log` in `authService.ts` — replace with real SMS gateway
-
-Search for `Math.random()` across the codebase before deploying — every occurrence is mock plumbing that must be removed or replaced.
-
-### 10. Order of Backend Integration
-
-Recommended sequence to minimize integration pain:
-
-1. **Auth first** — login, signup, OTP. Get JWT flow working end-to-end.
-2. **Identity verification** — KYC submission and status retrieval.
-3. **Application CRUD** — create, list, get by ID, update status.
-4. **File uploads** — wire document upload endpoints.
-5. **Payment integration** — real CashPlus gateway.
-6. **Mukhtar and Officer flows** — protected by role guards.
-7. **Notifications** — polling first, WebSockets later if needed.
-8. **ML pipeline** — biometric inference, document verification (likely a separate service called by NestJS).
-9. **LibanPost integration** — delivery manifest and callbacks.
-
-Each step should keep the rest of the app working in mock mode via a feature flag (e.g., `VITE_USE_MOCK_AUTH=true`), so partial integration doesn't break the demo.
+### 15. CORS and Environment Configuration
+NestJS needs `app.enableCors({ origin: [...] })` for the Vite dev server and production domain. Frontend reads API base URL from `import.meta.env.VITE_API_BASE_URL`.
 
 ---
 
-_Last updated: Session 8 — Citizen Portal Completion_
+*Last updated: Session 11 — Passport Entity, ISSUED State & Expiry Banner Wiring*
