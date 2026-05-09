@@ -1,12 +1,14 @@
 import type { StoredUser } from "./authService";
 import type { AuthorizedStoredUser } from "./authService";
 import type { PassportApplication } from "./applicationService";
+import type { Passport } from "../types/passport";
 
 const USERS_KEY = "npis_users";
 const AUTHORIZED_USERS_KEY = "npis_authorized_users";
 const kycStatusKey = (userId: string) => `kyc_status_${userId}`;
 const identityDataKey = (userId: string) => `identity_data_${userId}`;
 const applicationsKey = (userId: string) => `applications_${userId}`;
+const passportsKey = (userId: string) => `passports_${userId}`;
 const signatureKey = (applicationId: string) =>
   `mukhtar_signature_${applicationId}`;
 
@@ -318,17 +320,26 @@ const SEED_SIGNATURES: Record<string, object> = {
 
 // ─── Near-expiry DELIVERED apps for user_002 (built dynamically relative to today) ──
 
+// Issuance offsets (now-relative) used by both the application and passport seeders
+// so the passport's expiresAt aligns with the intended severity tier.
+const yearMs = 1000 * 60 * 60 * 24 * 365;
+const monthMs = 1000 * 60 * 60 * 24 * 30;
+
+const expiryOffsets = () => {
+  const now = Date.now();
+  return {
+    // Info-tier: ~6 months until expiry → 5y validity, issued ~4y6m ago
+    info: new Date(now - 4.5 * yearMs).toISOString(),
+    // Warning-tier: ~2 months until expiry → 5y validity, issued ~4y10m ago
+    warning: new Date(now - (4 * yearMs + 10 * monthMs)).toISOString(),
+    // Critical/Expired: expired ~1 month ago → 5y validity, issued ~5y1m ago
+    expired: new Date(now - (5 * yearMs + monthMs)).toISOString(),
+  };
+};
+
 const buildExpiryDemoApps = (): PassportApplication[] => {
   const now = Date.now();
-  const yearMs = 1000 * 60 * 60 * 24 * 365;
-  const monthMs = 1000 * 60 * 60 * 24 * 30;
-
-  // Info-tier: ~6 months until expiry → 5y validity, delivered ~4y6m ago
-  const infoDelivered = new Date(now - (4.5 * yearMs)).toISOString();
-  // Warning-tier: ~2 months until expiry → 5y validity, delivered ~4y10m ago
-  const warningDelivered = new Date(now - (4 * yearMs + 10 * monthMs)).toISOString();
-  // Critical/Expired: already expired ~1 month ago → 5y validity, delivered ~5y1m ago
-  const expiredDelivered = new Date(now - (5 * yearMs + monthMs)).toISOString();
+  const issued = expiryOffsets();
 
   const baseDocs = {
     identityDocument: "national_id.pdf",
@@ -355,9 +366,9 @@ const buildExpiryDemoApps = (): PassportApplication[] => {
       documents: baseDocs,
       mukhtarFormData: baseMukhtarForm,
       biometricCaptured: true,
-      deliveredDate: infoDelivered,
       statusHistory: [
-        { status: "DELIVERED", timestamp: infoDelivered },
+        { status: "ISSUED", timestamp: issued.info },
+        { status: "DELIVERED", timestamp: issued.info },
       ],
     },
     {
@@ -373,9 +384,9 @@ const buildExpiryDemoApps = (): PassportApplication[] => {
       documents: baseDocs,
       mukhtarFormData: baseMukhtarForm,
       biometricCaptured: true,
-      deliveredDate: warningDelivered,
       statusHistory: [
-        { status: "DELIVERED", timestamp: warningDelivered },
+        { status: "ISSUED", timestamp: issued.warning },
+        { status: "DELIVERED", timestamp: issued.warning },
       ],
     },
     {
@@ -391,10 +402,56 @@ const buildExpiryDemoApps = (): PassportApplication[] => {
       documents: baseDocs,
       mukhtarFormData: baseMukhtarForm,
       biometricCaptured: true,
-      deliveredDate: expiredDelivered,
       statusHistory: [
-        { status: "DELIVERED", timestamp: expiredDelivered },
+        { status: "ISSUED", timestamp: issued.expired },
+        { status: "DELIVERED", timestamp: issued.expired },
       ],
+    },
+  ];
+};
+
+// Build matching passport records for the three near-expiry seeded applications.
+// expiresAt is computed from issuedAt + 5y so the banner severity tiers match.
+const buildExpiryDemoPassports = (): Passport[] => {
+  const issued = expiryOffsets();
+  const expiresFromIssued = (iso: string): string => {
+    const d = new Date(iso);
+    d.setFullYear(d.getFullYear() + 5);
+    return d.toISOString();
+  };
+  return [
+    {
+      passportId: "pp_seed_002_info",
+      userId: "user_002",
+      sourceApplicationId: "app_seed_002_expiry_info",
+      bookletNumber: "LB-7000001",
+      status: "ACTIVE",
+      issuedAt: issued.info,
+      expiresAt: expiresFromIssued(issued.info),
+      cancelledAt: null,
+      cancelledByApplicationId: null,
+    },
+    {
+      passportId: "pp_seed_002_warning",
+      userId: "user_002",
+      sourceApplicationId: "app_seed_002_expiry_warning",
+      bookletNumber: "LB-7000002",
+      status: "ACTIVE",
+      issuedAt: issued.warning,
+      expiresAt: expiresFromIssued(issued.warning),
+      cancelledAt: null,
+      cancelledByApplicationId: null,
+    },
+    {
+      passportId: "pp_seed_002_expired",
+      userId: "user_002",
+      sourceApplicationId: "app_seed_002_expiry_expired",
+      bookletNumber: "LB-7000003",
+      status: "ACTIVE",
+      issuedAt: issued.expired,
+      expiresAt: expiresFromIssued(issued.expired),
+      cancelledAt: null,
+      cancelledByApplicationId: null,
     },
   ];
 };
@@ -459,13 +516,37 @@ const seedSignaturesIfNeeded = (): void => {
   }
 };
 
+// Merges passport records into storage by sourceApplicationId — never overwrites.
+const ensurePassportsExist = (userId: string, passports: Passport[]): void => {
+  const stored: Passport[] = JSON.parse(
+    localStorage.getItem(passportsKey(userId)) || "[]",
+  );
+  const existingSources = new Set(stored.map((p) => p.sourceApplicationId));
+  const toAdd = passports.filter(
+    (p) => !existingSources.has(p.sourceApplicationId),
+  );
+  if (toAdd.length > 0) {
+    localStorage.setItem(
+      passportsKey(userId),
+      JSON.stringify([...stored, ...toAdd]),
+    );
+  }
+};
+
 // ─── Public entry point ───────────────────────────────────────────────────────
 
 // Force clears all application data then re-seeds — for DevStatusPanel use.
 export const reseedTestData = (): void => {
   for (let i = localStorage.length - 1; i >= 0; i--) {
     const k = localStorage.key(i);
-    if (k && k.startsWith("applications_")) localStorage.removeItem(k);
+    if (
+      k &&
+      (k.startsWith("applications_") ||
+        k.startsWith("passports_") ||
+        k.startsWith("expiry_banner_dismissed_"))
+    ) {
+      localStorage.removeItem(k);
+    }
   }
   localStorage.removeItem(USERS_KEY);
   localStorage.removeItem(AUTHORIZED_USERS_KEY);
@@ -500,6 +581,10 @@ export const seedTestDataIfNeeded = (): void => {
     ...buildExpiryDemoApps(),
   ]);
   ensureApplicationsExist("user_001", APPS_USER_001);
+
+  // Seed passport records for the three near-expiry demo applications so the
+  // citizen expiry banner has data to display via passportService.
+  ensurePassportsExist("user_002", buildExpiryDemoPassports());
 
   // Seed mukhtar signatures for pre-signed applications
   seedSignaturesIfNeeded();

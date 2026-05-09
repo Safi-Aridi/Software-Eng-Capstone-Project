@@ -32,25 +32,31 @@ const TIMELINE_STAGES = [
   },
   {
     key: "PROCESSED",
-    label: "Processed for Issuance",
-    description: "Your passport is being prepared for issuance.",
+    label: "Approved for Printing",
+    description: "Your application has been approved and sent for passport printing.",
+  },
+  {
+    key: "ISSUED",
+    label: "Passport Issued",
+    description: "Your new passport has been issued and handed to LibanPost for delivery.",
   },
   {
     key: "DELIVERED",
     label: "Delivered",
-    description: "Your passport has been issued and is ready for collection.",
+    description: "Your passport has been delivered.",
   },
 ];
 
 // Number of completed stages (stages before the current active one).
-// DELIVERED = 6 so all 6 stages are covered by i < 6.
+// DELIVERED = 7 so all 7 stages are covered by i < 7.
 const COMPLETED_BEFORE: Record<ApplicationStatus, number> = {
   PENDING_REVIEW: 1,
   RESUBMISSION_REQUIRED: 1,
   VERIFIED: 2,
   MUKHTAR_SIGNED: 3,
   PROCESSED: 4,
-  DELIVERED: 6,
+  ISSUED: 5,
+  DELIVERED: 7,
 };
 
 // Stage index whose statusHistory entry provides its timestamp (0 = submissionDate)
@@ -60,7 +66,8 @@ const STAGE_HISTORY_STATUS: Record<number, ApplicationStatus | null> = {
   2: "VERIFIED",
   3: "MUKHTAR_SIGNED",
   4: "PROCESSED",
-  5: "DELIVERED",
+  5: "ISSUED",
+  6: "DELIVERED",
 };
 
 // TODO: Replace with real branch processing speed calculation (FR-11, FR-27)
@@ -74,6 +81,8 @@ const getEstimate = (status: ApplicationStatus): string => {
       return "Estimated: 2–3 business days";
     case "PROCESSED":
       return "Estimated: 1–2 business days";
+    case "ISSUED":
+      return "Passport issued — awaiting delivery";
     case "DELIVERED":
       return "Completed";
     case "RESUBMISSION_REQUIRED":
@@ -85,7 +94,8 @@ const STATUS_LABELS: Record<ApplicationStatus, string> = {
   PENDING_REVIEW: "Pending Review",
   VERIFIED: "Verified",
   MUKHTAR_SIGNED: "Mukhtar Signed",
-  PROCESSED: "Processed",
+  PROCESSED: "Approved for Printing",
+  ISSUED: "Passport Issued",
   RESUBMISSION_REQUIRED: "Resubmission Required",
   DELIVERED: "Delivered",
 };
@@ -95,6 +105,7 @@ const STATUS_STYLES: Record<ApplicationStatus, string> = {
   VERIFIED: "bg-green-100 text-green-800",
   MUKHTAR_SIGNED: "bg-blue-100 text-blue-800",
   PROCESSED: "bg-green-100 text-green-800",
+  ISSUED: "bg-emerald-100 text-emerald-800",
   RESUBMISSION_REQUIRED: "bg-red-100 text-red-800",
   DELIVERED: "bg-green-100 text-green-800",
 };

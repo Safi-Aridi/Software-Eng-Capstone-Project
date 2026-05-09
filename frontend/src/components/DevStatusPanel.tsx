@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import type { ApplicationStatus, PassportApplication } from "../services/applicationService";
 import { reseedTestData } from "../services/seedTestData";
+import { passportService } from "../services/passportService";
 
 const STATUS_OPTIONS: { value: ApplicationStatus; label: string; color: string }[] = [
   { value: "PENDING_REVIEW", label: "PENDING_REVIEW", color: "bg-gray-500" },
   { value: "VERIFIED", label: "VERIFIED", color: "bg-blue-600" },
   { value: "MUKHTAR_SIGNED", label: "MUKHTAR_SIGNED", color: "bg-purple-600" },
   { value: "PROCESSED", label: "PROCESSED", color: "bg-green-600" },
+  { value: "ISSUED", label: "ISSUED", color: "bg-emerald-600" },
   { value: "RESUBMISSION_REQUIRED", label: "RESUBMISSION_REQUIRED", color: "bg-yellow-500" },
   { value: "DELIVERED", label: "DELIVERED", color: "bg-teal-600" },
 ];
@@ -46,6 +48,20 @@ const updateApplicationInStorage = (updated: PassportApplication): void => {
   }
 };
 
+const generateBookletNumber = (): string => {
+  const n = Math.floor(1_000_000 + Math.random() * 9_000_000);
+  return `LB-${n}`;
+};
+
+// True when a passport record already exists for this application.
+const hasPassportRecord = async (
+  userId: string,
+  applicationId: string,
+): Promise<boolean> => {
+  const passports = await passportService.getPassportsByUser(userId);
+  return passports.some((p) => p.sourceApplicationId === applicationId);
+};
+
 const DevStatusPanel = () => {
   const [expanded, setExpanded] = useState(false);
   const [apps, setApps] = useState<PassportApplication[]>([]);
@@ -72,11 +88,17 @@ const DevStatusPanel = () => {
     setTimeout(() => setFlash(null), 1500);
   };
 
-  const updateStatus = (status: ApplicationStatus) => {
+  const persist = (updated: PassportApplication) => {
+    updateApplicationInStorage(updated);
+    setApps((prev) =>
+      prev.map((a) => (a.applicationId === selectedId ? updated : a)),
+    );
+  };
+
+  const updateStatus = async (status: ApplicationStatus) => {
     if (!selected) return;
     const updated: PassportApplication = { ...selected, currentStatus: status };
-    // Seed mock per-document rejection reasons when forcing RESUBMISSION_REQUIRED,
-    // so the resubmission page has something to render.
+
     if (status === "RESUBMISSION_REQUIRED") {
       updated.resubmissionReasons = {
         identityDocument: "Photo on ID does not match passport photo",
@@ -84,52 +106,101 @@ const DevStatusPanel = () => {
     } else {
       updated.resubmissionReasons = undefined;
     }
-    if (status === "DELIVERED" && !updated.deliveredDate) {
-      updated.deliveredDate = new Date().toISOString();
+
+    // ISSUED override — same side-effects as Officer flow:
+    // create ACTIVE passport record, cancel old passport for renewals.
+    if (status === "ISSUED") {
+      const alreadyIssued = await hasPassportRecord(
+        selected.userId,
+        selected.applicationId,
+      );
+      if (!alreadyIssued) {
+        const proposed = generateBookletNumber();
+        const entered = window.prompt(
+          "Enter booklet number for issued passport (LB-XXXXXXX):",
+          proposed,
+        );
+        if (entered === null) return; // user cancelled
+        const trimmed = entered.trim();
+        if (!/^LB-\d{7}$/.test(trimmed)) {
+          showFlash("✗ Invalid booklet number");
+          return;
+        }
+        await passportService.createPassport(
+          selected.userId,
+          selected.applicationId,
+          trimmed,
+        );
+        if (
+          selected.applicationType === "RENEWAL" &&
+          selected.renewingPassportId
+        ) {
+          await passportService.cancelPassport(
+            selected.renewingPassportId,
+            selected.applicationId,
+          );
+        }
+      }
+      updated.statusHistory = [
+        ...(selected.statusHistory ?? []),
+        { status: "ISSUED", timestamp: new Date().toISOString() },
+      ];
     }
-    updateApplicationInStorage(updated);
-    setApps((prev) =>
-      prev.map((a) => (a.applicationId === selectedId ? updated : a)),
-    );
-    showFlash("✓ Updated");
-  };
 
-  const updateDeliveredDate = (isoDate: string) => {
-    if (!selected) return;
-    const updated: PassportApplication = {
-      ...selected,
-      deliveredDate: isoDate,
-      currentStatus: "DELIVERED",
-    };
-    // Clear info-tier dismissal so the banner re-evaluates against the new date
-    localStorage.removeItem(`expiry_banner_dismissed_${selected.applicationId}`);
-    updateApplicationInStorage(updated);
-    setApps((prev) =>
-      prev.map((a) => (a.applicationId === selectedId ? updated : a)),
-    );
-    showFlash("✓ Updated");
-  };
+    // DELIVERED override — passport creation moved to ISSUED.
+    // If dev jumped straight here without going through ISSUED, auto-create
+    // a passport record so the expiry banner has data to show.
+    if (status === "DELIVERED") {
+      const alreadyIssued = await hasPassportRecord(
+        selected.userId,
+        selected.applicationId,
+      );
+      if (!alreadyIssued) {
+        const generated = generateBookletNumber();
+        console.warn(
+          `[DevStatusPanel] DELIVERED override: no passport record for ${selected.applicationId}; auto-creating with booklet ${generated}.`,
+        );
+        await passportService.createPassport(
+          selected.userId,
+          selected.applicationId,
+          generated,
+        );
+        if (
+          selected.applicationType === "RENEWAL" &&
+          selected.renewingPassportId
+        ) {
+          await passportService.cancelPassport(
+            selected.renewingPassportId,
+            selected.applicationId,
+          );
+        }
+      }
+      updated.statusHistory = [
+        ...(selected.statusHistory ?? []),
+        { status: "DELIVERED", timestamp: new Date().toISOString() },
+      ];
+    }
 
-  const setDeliveredOffset = (yearsAgo: number) => {
-    const now = Date.now();
-    const ts = new Date(now - yearsAgo * 365 * 24 * 60 * 60 * 1000).toISOString();
-    updateDeliveredDate(ts);
+    persist(updated);
+    showFlash("✓ Updated");
   };
 
   const updatePayment = (paymentStatus: "UNPAID" | "Paid" | "Failed") => {
     if (!selected) return;
-    const updated = { ...selected, paymentStatus };
-    updateApplicationInStorage(updated);
-    setApps((prev) =>
-      prev.map((a) => (a.applicationId === selectedId ? updated : a)),
-    );
+    persist({ ...selected, paymentStatus });
     showFlash("✓ Updated");
   };
 
   const handleClearAll = () => {
     for (let i = localStorage.length - 1; i >= 0; i--) {
       const k = localStorage.key(i);
-      if (k?.startsWith("applications_")) localStorage.removeItem(k);
+      if (
+        k?.startsWith("applications_") ||
+        k?.startsWith("passports_") ||
+        k?.startsWith("expiry_banner_dismissed_")
+      ) {
+        localStorage.removeItem(k);
+      }
     }
     setApps([]);
     setSelectedId("");
@@ -157,7 +228,6 @@ const DevStatusPanel = () => {
 
   return (
     <div className="fixed bottom-4 left-4 z-50 w-80 bg-gray-900 text-gray-100 rounded-lg shadow-2xl font-mono text-xs overflow-hidden">
-      {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 bg-gray-800 border-b border-gray-700">
         <span className="font-semibold text-gray-200">Dev Controls — Status Override</span>
         <button
@@ -169,7 +239,6 @@ const DevStatusPanel = () => {
       </div>
 
       <div className="p-3 space-y-3 max-h-[80vh] overflow-y-auto">
-        {/* App selector */}
         <div>
           <label className="block text-gray-400 mb-1">Application</label>
           {apps.length === 0 ? (
@@ -191,7 +260,6 @@ const DevStatusPanel = () => {
 
         {selected && (
           <>
-            {/* Status override */}
             <div>
               <label className="block text-gray-400 mb-1">Application Status</label>
               <div className="grid grid-cols-2 gap-1">
@@ -212,52 +280,6 @@ const DevStatusPanel = () => {
               </div>
             </div>
 
-            {/* Delivered date override (drives expiry banner) */}
-            <div>
-              <label className="block text-gray-400 mb-1">
-                Delivered Date (sets status DELIVERED)
-              </label>
-              <input
-                type="date"
-                value={
-                  selected.deliveredDate
-                    ? selected.deliveredDate.slice(0, 10)
-                    : ""
-                }
-                onChange={(e) => {
-                  if (!e.target.value) return;
-                  updateDeliveredDate(
-                    new Date(e.target.value).toISOString(),
-                  );
-                }}
-                className="w-full bg-gray-800 border border-gray-600 text-gray-100 rounded px-2 py-1 text-xs mb-1"
-              />
-              <div className="grid grid-cols-3 gap-1">
-                <button
-                  onClick={() => setDeliveredOffset(4.5)}
-                  className="px-1 py-1 rounded bg-blue-700 hover:bg-blue-600 text-xs"
-                  title="≈ 6 months until expiry (Info)"
-                >
-                  -4.5y (Info)
-                </button>
-                <button
-                  onClick={() => setDeliveredOffset(4 + 10 / 12)}
-                  className="px-1 py-1 rounded bg-amber-700 hover:bg-amber-600 text-xs"
-                  title="≈ 2 months until expiry (Warning)"
-                >
-                  -4y10m (Warn)
-                </button>
-                <button
-                  onClick={() => setDeliveredOffset(5 + 1 / 12)}
-                  className="px-1 py-1 rounded bg-red-700 hover:bg-red-600 text-xs"
-                  title="Already expired (Critical)"
-                >
-                  -5y1m (Exp)
-                </button>
-              </div>
-            </div>
-
-            {/* Payment status override */}
             <div>
               <label className="block text-gray-400 mb-1">Payment Status</label>
               <div className="flex gap-1">
@@ -286,7 +308,6 @@ const DevStatusPanel = () => {
           <div className="text-center text-green-400 font-semibold">{flash}</div>
         )}
 
-        {/* Quick actions */}
         <div className="border-t border-gray-700 pt-3 space-y-1.5">
           <button
             onClick={() => window.location.reload()}
@@ -297,7 +318,7 @@ const DevStatusPanel = () => {
 
           {confirmClear ? (
             <div className="bg-gray-800 rounded p-2 space-y-1">
-              <p className="text-yellow-400 text-xs">Are you sure? This cannot be undone.</p>
+              <p className="text-yellow-400 text-xs">Clears applications, passports, and dismissals. This cannot be undone.</p>
               <div className="flex gap-1">
                 <button
                   onClick={handleClearAll}
@@ -318,7 +339,7 @@ const DevStatusPanel = () => {
               onClick={() => setConfirmClear(true)}
               className="w-full bg-gray-700 hover:bg-red-900 px-3 py-1.5 rounded text-left transition-colors"
             >
-              🗑 Clear All Applications
+              🗑 Clear Applications & Passports
             </button>
           )}
 
@@ -330,7 +351,6 @@ const DevStatusPanel = () => {
           </button>
         </div>
 
-        {/* Dismissal note */}
         <p className="border-t border-gray-700 pt-2 text-gray-500 text-xs leading-tight">
           This panel is only visible in development mode (import.meta.env.DEV)
         </p>

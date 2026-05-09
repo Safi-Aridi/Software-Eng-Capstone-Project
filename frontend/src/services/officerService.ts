@@ -68,6 +68,18 @@ export const officerService = {
     return scanApplicationsByStatus("MUKHTAR_SIGNED");
   },
 
+  // FR-18 (extension) — Retrieve applications awaiting passport issuance (PROCESSED → ISSUED)
+  // TODO: GET /api/officer/applications?status=PROCESSED
+  getIssuanceQueueFull: async (
+    _officerId: string,
+  ): Promise<EnrichedApplication[]> => {
+    const apps = scanApplicationsByStatus("PROCESSED");
+    return apps.map((app) => ({
+      app,
+      citizenIdentity: getIdentityForUser(app.userId),
+    }));
+  },
+
   // FR-18 — Final approval; transitions application to PROCESSED
   // TODO: POST /api/officer/applications/:id/approve (FR-18)
   approveApplication: async (
@@ -96,8 +108,8 @@ export const officerService = {
       notificationService.create(citizenUserId, {
         userId: citizenUserId,
         type: "STATUS_UPDATE",
-        title: "Application Processed",
-        message: `Your passport application ${trackingNumber} has been approved and is being processed for issuance.`,
+        title: "Application Approved for Printing",
+        message: `Your application ${trackingNumber} has been approved and sent for passport printing.`,
         applicationId,
       });
     }
@@ -153,6 +165,49 @@ export const officerService = {
         type: "STATUS_UPDATE",
         title: "Renewal Approved",
         message: `Your passport renewal ${trackingNumber} has been approved. Your previous passport has been officially cancelled in the registry.`,
+        applicationId,
+      });
+    }
+    return { success: true };
+  },
+
+  // FR-18 (extension) — Second officer action: passport issuance.
+  // Transitions PROCESSED → ISSUED and emits the citizen notification.
+  // Caller is responsible for creating the Passport record and cancelling the
+  // old passport (renewal flow) via passportService before invoking this.
+  // TODO: POST /api/officer/applications/:id/issue
+  issueApplication: async (
+    _officerId: string,
+    applicationId: string,
+    bookletNumber: string,
+    options?: { isRenewal?: boolean },
+  ): Promise<{ success: boolean }> => {
+    const timestamp = new Date().toISOString();
+    let citizenUserId: string | null = null;
+    let trackingNumber = "";
+    updateApplicationInStorage(applicationId, (app) => {
+      citizenUserId = app.userId;
+      trackingNumber = app.trackingNumber;
+      return {
+        ...app,
+        currentStatus: "ISSUED",
+        statusHistory: [
+          ...(app.statusHistory ?? []),
+          { status: "ISSUED" as const, timestamp },
+        ],
+      };
+    });
+
+    // TODO: Remove when backend is connected — NestJS handles notification creation server-side
+    if (citizenUserId) {
+      const renewalSuffix = options?.isRenewal
+        ? " Your old passport has been cancelled."
+        : "";
+      notificationService.create(citizenUserId, {
+        userId: citizenUserId,
+        type: "STATUS_UPDATE",
+        title: "Passport Issued",
+        message: `Your new passport (booklet: ${bookletNumber}) has been issued and handed to LibanPost for delivery.${renewalSuffix}`,
         applicationId,
       });
     }

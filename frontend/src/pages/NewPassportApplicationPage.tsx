@@ -5,6 +5,7 @@ import {
   applicationService,
   type PassportApplication,
 } from "../services/applicationService";
+import { passportService } from "../services/passportService";
 import EnhancedFileUploadField from "../components/upload/EnhancedFileUploadField";
 import BiometricCaptureWidget from "../components/BiometricCaptureWidget";
 
@@ -175,6 +176,22 @@ const NewPassportApplicationPage = () => {
     setIsSubmitting(true);
     const trackingNumber = applicationService.generateTrackingNumber();
     const applicationId = "app_" + Date.now();
+
+    // Resolve fromExpiry (the applicationId that produced the passport being renewed)
+    // to the corresponding passportId, so the expiry banner can be suppressed while
+    // this renewal is active. Non-blocking — old seeded data without passport
+    // records yields null. Renewals started without the banner stay null too;
+    // banner suppression won't apply for those (acceptable v1 limitation).
+    let renewingPassportId: string | null = null;
+    const fromExpiry = searchParams.get("fromExpiry");
+    if (applicationType === "RENEWAL" && fromExpiry) {
+      const passports = await passportService.getPassportsByUser(
+        currentUser.user.id,
+      );
+      const match = passports.find((p) => p.sourceApplicationId === fromExpiry);
+      renewingPassportId = match?.passportId ?? null;
+    }
+
     const application: PassportApplication = {
       applicationId,
       userId: currentUser.user.id,
@@ -192,6 +209,7 @@ const NewPassportApplicationPage = () => {
       },
       mukhtarFormData: mukhtarForm,
       biometricCaptured,
+      renewingPassportId,
     };
 
     // TODO: Replace with POST /api/applications when backend is ready

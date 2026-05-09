@@ -9,7 +9,8 @@
       "Bash(npx tsc *)",
       "Bash(echo \"EXIT=$?\")",
       "Bash(npm install *)",
-      "Bash(npx vite *)"
+      "Bash(npx vite *)",
+      "Bash(echo \"Exit: $?\")"
     ]
   },
   "spinnerTipsEnabled": true,

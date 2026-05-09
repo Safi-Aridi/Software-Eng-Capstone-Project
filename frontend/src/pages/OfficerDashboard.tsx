@@ -2,7 +2,9 @@ import { useEffect, useState, useCallback, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { authService } from "../services/authService";
 import { officerService } from "../services/officerService";
+import { passportService } from "../services/passportService";
 import type { EnrichedApplication } from "../services/applicationService";
+import type { Passport } from "../types/passport";
 import type { MukhtarSignature } from "../services/mukhtarService";
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
@@ -39,18 +41,12 @@ const Toast = ({
 
 const StatusBadge = ({ status }: { status: string }) => {
   const styles: Record<string, string> = {
-    VERIFIED: "bg-blue-100 text-blue-800",
     MUKHTAR_SIGNED: "bg-purple-100 text-purple-800",
     PROCESSED: "bg-green-100 text-green-800",
-    RESUBMISSION_REQUIRED: "bg-yellow-100 text-yellow-800",
-    PENDING_REVIEW: "bg-gray-100 text-gray-700",
   };
   const labels: Record<string, string> = {
-    VERIFIED: "Verified",
     MUKHTAR_SIGNED: "Mukhtar Signed",
-    PROCESSED: "Processed",
-    RESUBMISSION_REQUIRED: "Resubmission Required",
-    PENDING_REVIEW: "Pending Review",
+    PROCESSED: "Approved for Printing",
   };
   return (
     <span
@@ -65,11 +61,11 @@ const StatusBadge = ({ status }: { status: string }) => {
 
 const QueueCard = ({
   item,
-  signedAt,
+  detailLabel,
   onClick,
 }: {
   item: EnrichedApplication;
-  signedAt: string | null;
+  detailLabel: string | null;
   onClick: () => void;
 }) => {
   const { app, citizenIdentity } = item;
@@ -92,17 +88,8 @@ const QueueCard = ({
           <p className="text-xs text-gray-400 mt-1 font-mono">
             {app.trackingNumber}
           </p>
-          {signedAt && (
-            <p className="text-xs text-purple-600 mt-0.5">
-              Signed:{" "}
-              {new Date(signedAt).toLocaleDateString("en-GB", {
-                day: "numeric",
-                month: "short",
-                year: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </p>
+          {detailLabel && (
+            <p className="text-xs text-purple-600 mt-0.5">{detailLabel}</p>
           )}
         </div>
         <div className="flex flex-col items-end gap-2 shrink-0">
@@ -114,7 +101,7 @@ const QueueCard = ({
   );
 };
 
-// ─── Dismissible Modal Wrapper ────────────────────────────────────────────────
+// ─── Modal Wrapper ────────────────────────────────────────────────────────────
 
 const ModalShell = ({
   onDismiss,
@@ -141,65 +128,9 @@ const ModalShell = ({
   );
 };
 
-// ─── Cancel Old Passport Modal (FR-19) ───────────────────────────────────────
+// ─── Approval Detail Modal (MUKHTAR_SIGNED) ───────────────────────────────────
 
-const CancelOldPassportModal = ({
-  trackingNumber,
-  mrzReference,
-  onConfirm,
-  onCancel,
-  isProcessing,
-}: {
-  trackingNumber: string;
-  mrzReference: string;
-  onConfirm: () => void;
-  onCancel: () => void;
-  isProcessing: boolean;
-}) => (
-  <ModalShell onDismiss={isProcessing ? () => {} : onCancel}>
-    <div className="bg-white rounded-xl shadow-2xl max-w-md w-full mx-4 p-6">
-      <h3 className="text-lg font-bold text-gray-800 mb-2">
-        Confirm Old Passport Destruction
-      </h3>
-      <p className="text-gray-600 text-sm mb-2">
-        Confirm physical destruction of the old passport booklet for application{" "}
-        <span className="font-mono font-semibold text-gray-800">
-          {trackingNumber}
-        </span>
-        .
-      </p>
-      <p className="text-gray-600 text-sm mb-2">
-        MRZ reference:{" "}
-        <span className="font-mono font-semibold text-gray-800">
-          {mrzReference}
-        </span>
-      </p>
-      <p className="text-red-600 text-sm font-medium mb-6">
-        This action cannot be undone.
-      </p>
-      <div className="flex gap-3 justify-end">
-        <button
-          onClick={onCancel}
-          disabled={isProcessing}
-          className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors text-sm"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={onConfirm}
-          disabled={isProcessing}
-          className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors text-sm font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
-        >
-          {isProcessing ? "Processing…" : "Confirm Destruction"}
-        </button>
-      </div>
-    </div>
-  </ModalShell>
-);
-
-// ─── Detail Modal ─────────────────────────────────────────────────────────────
-
-const DetailModal = ({
+const ApprovalDetailModal = ({
   item,
   signature,
   onClose,
@@ -216,11 +147,10 @@ const DetailModal = ({
   return (
     <div className="fixed inset-0 z-40 flex items-start justify-center bg-black/50 overflow-y-auto py-8">
       <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full mx-4 mb-4">
-        {/* Header */}
         <div className="flex justify-between items-center p-6 border-b border-gray-200">
           <div>
             <h2 className="text-lg font-bold text-gray-800">
-              Final Processing Review
+              Approval Review
             </h2>
             <p className="text-sm font-mono text-gray-500">
               {app.trackingNumber}
@@ -239,77 +169,51 @@ const DetailModal = ({
         </div>
 
         <div className="p-6 space-y-6">
-          {/* Citizen Identity */}
           <section>
             <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
               Citizen Identity
             </h3>
             <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-              <div>
-                <p className="text-gray-500">Full Name</p>
-                <p className="font-medium text-gray-800">
-                  {citizenIdentity?.fullName ?? "—"}
-                </p>
-              </div>
-              <div>
-                <p className="text-gray-500">Registry Number</p>
-                <p className="font-medium text-gray-800 font-mono">
-                  {citizenIdentity?.registryNumber ?? "—"}
-                </p>
-              </div>
-              <div>
-                <p className="text-gray-500">Date of Birth</p>
-                <p className="font-medium text-gray-800">{dob}</p>
-              </div>
-              <div>
-                <p className="text-gray-500">District</p>
-                <p className="font-medium text-gray-800">
-                  {app.mukhtarFormData.district}
-                </p>
-              </div>
+              <Field label="Full Name" value={citizenIdentity?.fullName ?? "—"} />
+              <Field
+                label="Registry Number"
+                value={citizenIdentity?.registryNumber ?? "—"}
+                mono
+              />
+              <Field label="Date of Birth" value={dob} />
+              <Field label="District" value={app.mukhtarFormData.district} />
             </div>
           </section>
 
-          {/* Application Details */}
           <section>
             <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
               Application Details
             </h3>
             <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-              <div>
-                <p className="text-gray-500">Type</p>
-                <p className="font-medium text-gray-800">
-                  {app.applicationType === "NEW"
+              <Field
+                label="Type"
+                value={
+                  app.applicationType === "NEW"
                     ? "New Passport"
-                    : "Passport Renewal"}
-                </p>
-              </div>
-              <div>
-                <p className="text-gray-500">Validity</p>
-                <p className="font-medium text-gray-800">
-                  {app.passportValidity} Years
-                </p>
-              </div>
-              <div>
-                <p className="text-gray-500">Submission Date</p>
-                <p className="font-medium text-gray-800">
-                  {new Date(app.submissionDate).toLocaleDateString("en-GB", {
-                    day: "numeric",
-                    month: "long",
-                    year: "numeric",
-                  })}
-                </p>
-              </div>
-              <div>
-                <p className="text-gray-500">Fee</p>
-                <p className="font-medium text-gray-800">
-                  {app.feeAmount.toLocaleString()} LBP
-                </p>
-              </div>
+                    : "Passport Renewal"
+                }
+              />
+              <Field label="Validity" value={`${app.passportValidity} Years`} />
+              <Field
+                label="Submission Date"
+                value={new Date(app.submissionDate).toLocaleDateString("en-GB", {
+                  day: "numeric",
+                  month: "long",
+                  year: "numeric",
+                })}
+              />
+              <Field
+                label="Fee"
+                value={`${app.feeAmount.toLocaleString()} LBP`}
+              />
             </div>
           </section>
 
-          {/* Mukhtar Signature Info */}
           {signature && (
             <section>
               <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
@@ -350,70 +254,12 @@ const DetailModal = ({
             </section>
           )}
 
-          {/* Documents */}
-          <section>
-            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-              Submitted Documents
-            </h3>
-            <div className="space-y-2">
-              {app.documents.identityDocument && (
-                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                  <div className="w-10 h-10 rounded bg-gray-200 flex items-center justify-center shrink-0 text-gray-500 text-xs font-bold">
-                    {/\.(jpg|jpeg|png)$/i.test(app.documents.identityDocument)
-                      ? "IMG"
-                      : "PDF"}
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-gray-700">
-                      Identity Document
-                    </p>
-                    <p className="text-xs text-gray-400 font-mono">
-                      {app.documents.identityDocument}
-                    </p>
-                  </div>
-                </div>
-              )}
-              {app.documents.passportPhoto && (
-                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                  <div className="w-10 h-10 rounded bg-gray-200 flex items-center justify-center shrink-0 text-gray-500 text-xs font-bold">
-                    IMG
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-gray-700">
-                      Passport Photo
-                    </p>
-                    <p className="text-xs text-gray-400 font-mono">
-                      {app.documents.passportPhoto}
-                    </p>
-                  </div>
-                </div>
-              )}
-              {app.applicationType === "RENEWAL" &&
-                app.documents.oldPassport && (
-                  <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                    <div className="w-10 h-10 rounded bg-gray-200 flex items-center justify-center shrink-0 text-gray-500 text-xs font-bold">
-                      PDF
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium text-gray-700">
-                        Old Passport Scan
-                      </p>
-                      <p className="text-xs text-gray-400 font-mono">
-                        {app.documents.oldPassport}
-                      </p>
-                    </div>
-                  </div>
-                )}
-            </div>
-          </section>
-
-          {/* Action */}
           <div className="flex justify-end pt-2 border-t border-gray-100">
             <button
               onClick={onApprove}
               className="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-sm font-medium"
             >
-              Final Approval — Process for Issuance
+              Approve for Issuance
             </button>
           </div>
         </div>
@@ -421,6 +267,23 @@ const DetailModal = ({
     </div>
   );
 };
+
+const Field = ({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) => (
+  <div>
+    <p className="text-gray-500">{label}</p>
+    <p className={`font-medium text-gray-800 ${mono ? "font-mono" : ""}`}>
+      {value}
+    </p>
+  </div>
+);
 
 // ─── Approval Confirmation Modal ──────────────────────────────────────────────
 
@@ -445,7 +308,8 @@ const ApproveConfirmModal = ({
         <span className="font-mono font-semibold text-gray-800">
           {trackingNumber}
         </span>{" "}
-        will be marked as processed and forwarded for passport issuance.
+        will be marked as approved for printing. You will issue the booklet in
+        the next step.
       </p>
       <div className="flex gap-3 justify-end">
         <button
@@ -467,7 +331,156 @@ const ApproveConfirmModal = ({
   </ModalShell>
 );
 
+// ─── Issuance Detail Modal (PROCESSED) ────────────────────────────────────────
+
+const BOOKLET_REGEX = /^LB-\d{7}$/;
+
+const IssuanceDetailModal = ({
+  item,
+  oldPassport,
+  onClose,
+  onIssue,
+  isProcessing,
+}: {
+  item: EnrichedApplication;
+  oldPassport: Passport | null;
+  onClose: () => void;
+  onIssue: (bookletNumber: string) => void;
+  isProcessing: boolean;
+}) => {
+  const { app, citizenIdentity } = item;
+  const [bookletNumber, setBookletNumber] = useState("LB-");
+  const [touched, setTouched] = useState(false);
+
+  const valid = BOOKLET_REGEX.test(bookletNumber.trim());
+  const isRenewal = app.applicationType === "RENEWAL";
+
+  const handleSubmit = () => {
+    setTouched(true);
+    if (!valid) return;
+    onIssue(bookletNumber.trim());
+  };
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-start justify-center bg-black/50 overflow-y-auto py-8">
+      <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full mx-4 mb-4">
+        <div className="flex justify-between items-center p-6 border-b border-gray-200">
+          <div>
+            <h2 className="text-lg font-bold text-gray-800">
+              Passport Issuance
+            </h2>
+            <p className="text-sm font-mono text-gray-500">
+              {app.trackingNumber}
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <StatusBadge status={app.currentStatus} />
+            <button
+              onClick={onClose}
+              disabled={isProcessing}
+              className="text-gray-400 hover:text-gray-600 text-2xl leading-none disabled:opacity-50"
+              aria-label="Close"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+
+        <div className="p-6 space-y-6">
+          <section>
+            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+              Citizen
+            </h3>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+              <Field
+                label="Full Name"
+                value={citizenIdentity?.fullName ?? "—"}
+              />
+              <Field
+                label="Registry Number"
+                value={citizenIdentity?.registryNumber ?? "—"}
+                mono
+              />
+              <Field
+                label="Type"
+                value={isRenewal ? "Passport Renewal" : "New Passport"}
+              />
+              <Field label="Validity" value={`${app.passportValidity} Years`} />
+            </div>
+          </section>
+
+          {isRenewal && (
+            <div className="p-4 bg-amber-50 border border-amber-300 rounded-lg">
+              <p className="text-amber-900 text-sm font-medium mb-1">
+                ⚠ Renewal — old passport will be cancelled
+              </p>
+              <p className="text-amber-800 text-sm">
+                Issuing this passport will immediately cancel passport{" "}
+                <span className="font-mono font-semibold">
+                  {oldPassport?.bookletNumber ?? "on file"}
+                </span>
+                . This cannot be undone.
+              </p>
+            </div>
+          )}
+
+          <section>
+            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+              New Passport Booklet
+            </h3>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              New Passport Booklet Number
+            </label>
+            <input
+              type="text"
+              value={bookletNumber}
+              onChange={(e) =>
+                setBookletNumber(e.target.value.toUpperCase())
+              }
+              onBlur={() => setTouched(true)}
+              placeholder="LB-1234567"
+              className={`w-full px-3 py-2 border rounded-md font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                touched && !valid ? "border-red-400" : "border-gray-300"
+              }`}
+              disabled={isProcessing}
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Format: LB-XXXXXXX (2 letters, dash, 7 digits)
+            </p>
+            {touched && !valid && (
+              <p className="text-red-600 text-xs mt-1">
+                Booklet number must be in the format LB-XXXXXXX (7 digits).
+              </p>
+            )}
+          </section>
+
+          <div className="flex justify-end gap-3 pt-2 border-t border-gray-100">
+            <button
+              onClick={onClose}
+              disabled={isProcessing}
+              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors text-sm"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={isProcessing || !valid}
+              className="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-sm font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
+            >
+              {isProcessing
+                ? "Issuing…"
+                : "Issue Passport & Send for Delivery"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
+
+type Tab = "approval" | "issuance";
 
 const OfficerDashboard = () => {
   const navigate = useNavigate();
@@ -475,13 +488,20 @@ const OfficerDashboard = () => {
   const userId = currentUser?.user.id;
   const userRole = currentUser?.role;
 
-  const [queue, setQueue] = useState<EnrichedApplication[]>([]);
+  const [activeTab, setActiveTab] = useState<Tab>("approval");
+  const [approvalQueue, setApprovalQueue] = useState<EnrichedApplication[]>([]);
+  const [issuanceQueue, setIssuanceQueue] = useState<EnrichedApplication[]>([]);
   const [isLoadingQueue, setIsLoadingQueue] = useState(true);
-  const [selectedItem, setSelectedItem] = useState<EnrichedApplication | null>(
-    null,
-  );
+
+  const [selectedApproval, setSelectedApproval] =
+    useState<EnrichedApplication | null>(null);
   const [showApproveConfirm, setShowApproveConfirm] = useState(false);
-  const [showCancelModal, setShowCancelModal] = useState(false);
+
+  const [selectedIssuance, setSelectedIssuance] =
+    useState<EnrichedApplication | null>(null);
+  const [oldPassportForRenewal, setOldPassportForRenewal] =
+    useState<Passport | null>(null);
+
   const [isProcessing, setIsProcessing] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
 
@@ -496,18 +516,25 @@ const OfficerDashboard = () => {
     }
   }, [userId, userRole, navigate]);
 
+  const loadQueues = useCallback((uid: string) => {
+    setIsLoadingQueue(true);
+    Promise.all([
+      officerService.getProcessingQueueFull(uid),
+      officerService.getIssuanceQueueFull(uid),
+    ])
+      .then(([approval, issuance]) => {
+        setApprovalQueue(approval);
+        setIssuanceQueue(issuance);
+        setIsLoadingQueue(false);
+      })
+      .catch(() => setIsLoadingQueue(false));
+  }, []);
+
   useEffect(() => {
     if (userId && userRole === "officer") {
-      setIsLoadingQueue(true);
-      officerService
-        .getProcessingQueueFull(userId)
-        .then((items) => {
-          setQueue(items);
-          setIsLoadingQueue(false);
-        })
-        .catch(() => setIsLoadingQueue(false));
+      loadQueues(userId);
     }
-  }, [userId, userRole]);
+  }, [userId, userRole, loadQueues]);
 
   const showToast = useCallback(
     (message: string, type: "success" | "error") => {
@@ -518,74 +545,102 @@ const OfficerDashboard = () => {
 
   const dismissToast = useCallback(() => setToast(null), []);
 
-  const mrzReferenceFor = (trackingNumber: string) =>
-    trackingNumber.slice(-6).toUpperCase();
-
   const handleApprove = async () => {
-    if (!selectedItem || !currentUser) return;
-
-    // FR-19: RENEWAL flow defers approval until destruction is confirmed
-    if (selectedItem.app.applicationType === "RENEWAL") {
-      setShowApproveConfirm(false);
-      setShowCancelModal(true);
-      return;
-    }
+    if (!selectedApproval || !currentUser) return;
 
     setIsProcessing(true);
     await officerService.approveApplication(
       currentUser.user.id,
-      selectedItem.app.applicationId,
+      selectedApproval.app.applicationId,
     );
 
-    setQueue((prev) =>
+    setApprovalQueue((prev) =>
       prev.filter(
-        (e) => e.app.applicationId !== selectedItem.app.applicationId,
+        (e) => e.app.applicationId !== selectedApproval.app.applicationId,
       ),
     );
+    // Move into issuance queue locally so it's visible immediately on next tab.
+    setIssuanceQueue((prev) => [
+      ...prev,
+      {
+        ...selectedApproval,
+        app: { ...selectedApproval.app, currentStatus: "PROCESSED" },
+      },
+    ]);
 
     showToast(
-      `Application ${selectedItem.app.trackingNumber} approved for issuance.`,
+      `Application ${selectedApproval.app.trackingNumber} approved for printing.`,
       "success",
     );
     setIsProcessing(false);
     setShowApproveConfirm(false);
-    setSelectedItem(null);
+    setSelectedApproval(null);
   };
 
-  // FR-19 — Confirm physical destruction; runs approve + cancel together
-  const handleConfirmRenewalDestruction = async () => {
-    if (!selectedItem || !currentUser) return;
+  const handleOpenIssuance = async (item: EnrichedApplication) => {
+    setSelectedIssuance(item);
+    setOldPassportForRenewal(null);
+    if (
+      item.app.applicationType === "RENEWAL" &&
+      item.app.renewingPassportId
+    ) {
+      const passports = await passportService.getPassportsByUser(item.app.userId);
+      const old =
+        passports.find((p) => p.passportId === item.app.renewingPassportId) ??
+        null;
+      setOldPassportForRenewal(old);
+    }
+  };
+
+  const handleIssue = async (bookletNumber: string) => {
+    if (!selectedIssuance || !currentUser) return;
     setIsProcessing(true);
 
-    const applicationId = selectedItem.app.applicationId;
-    const trackingNumber = selectedItem.app.trackingNumber;
-    const mrz = mrzReferenceFor(trackingNumber);
+    const { app } = selectedIssuance;
+    const isRenewal = app.applicationType === "RENEWAL";
 
-    await officerService.approveApplication(
-      currentUser.user.id,
-      applicationId,
-      {
-        suppressNotification: true,
-      },
-    );
-    await officerService.cancelOldPassport(
-      currentUser.user.id,
-      applicationId,
-      mrz,
-      currentUser.user.fullName,
+    // 1. Create new ACTIVE passport record
+    await passportService.createPassport(
+      app.userId,
+      app.applicationId,
+      bookletNumber,
     );
 
-    setQueue((prev) =>
-      prev.filter((e) => e.app.applicationId !== applicationId),
+    // 2. Cancel old passport for renewals
+    if (isRenewal && app.renewingPassportId) {
+      await passportService.cancelPassport(
+        app.renewingPassportId,
+        app.applicationId,
+      );
+    }
+
+    // 3. Update status → ISSUED + create citizen notification
+    await officerService.issueApplication(
+      currentUser.user.id,
+      app.applicationId,
+      bookletNumber,
+      { isRenewal },
+    );
+
+    // 4. Mock LibanPost manifest transmission
+    // TODO: POST to LibanPost API endpoint (FR-31)
+    console.log("LibanPost manifest sent:", {
+      trackingNumber: app.trackingNumber,
+      bookletNumber,
+      citizenAddress: app.mukhtarFormData.address,
+    });
+
+    setIssuanceQueue((prev) =>
+      prev.filter((e) => e.app.applicationId !== app.applicationId),
     );
 
     showToast(
-      `Application ${trackingNumber} approved. Old passport cancelled in registry.`,
+      `Passport ${bookletNumber} issued for ${app.trackingNumber}.`,
       "success",
     );
     setIsProcessing(false);
-    setShowCancelModal(false);
-    setSelectedItem(null);
+    setSelectedIssuance(null);
+    setOldPassportForRenewal(null);
   };
 
   const handleLogout = () => {
@@ -595,9 +650,10 @@ const OfficerDashboard = () => {
 
   if (!currentUser || currentUser.role !== "officer") return null;
 
+  const activeQueue = activeTab === "approval" ? approvalQueue : issuanceQueue;
+
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
       <div className="bg-gray-800 text-white shadow-md">
         <div className="max-w-5xl mx-auto px-6 py-4 flex justify-between items-center">
           <div>
@@ -624,12 +680,32 @@ const OfficerDashboard = () => {
 
       <div className="max-w-5xl mx-auto px-6 py-8">
         <div className="bg-white rounded-lg shadow-md">
+          {/* Tabs */}
+          <div className="flex border-b border-gray-200">
+            <TabButton
+              label="Pending Approval"
+              count={approvalQueue.length}
+              active={activeTab === "approval"}
+              onClick={() => setActiveTab("approval")}
+            />
+            <TabButton
+              label="Ready for Issuance"
+              count={issuanceQueue.length}
+              active={activeTab === "issuance"}
+              onClick={() => setActiveTab("issuance")}
+            />
+          </div>
+
           <div className="p-6 border-b border-gray-200">
             <h2 className="text-xl font-semibold text-gray-800">
-              Applications Awaiting Final Processing
+              {activeTab === "approval"
+                ? "Applications Awaiting Approval"
+                : "Applications Awaiting Issuance"}
             </h2>
             <p className="text-sm text-gray-500 mt-1">
-              Mukhtar-endorsed applications ready for issuance approval
+              {activeTab === "approval"
+                ? "Mukhtar-endorsed applications ready for issuance approval."
+                : "Approved applications — enter the booklet number to issue and send for delivery."}
             </p>
           </div>
 
@@ -647,7 +723,7 @@ const OfficerDashboard = () => {
                   </div>
                 ))}
               </div>
-            ) : queue.length === 0 ? (
+            ) : activeQueue.length === 0 ? (
               <div className="text-center py-12 bg-gray-50 rounded-lg">
                 <svg
                   className="w-12 h-12 text-gray-300 mx-auto mb-4"
@@ -663,25 +739,64 @@ const OfficerDashboard = () => {
                   />
                 </svg>
                 <p className="text-gray-500 font-medium">
-                  No applications awaiting final processing.
+                  {activeTab === "approval"
+                    ? "No applications awaiting approval."
+                    : "No applications awaiting issuance."}
                 </p>
                 <p className="text-sm text-gray-400 mt-1">
-                  Applications signed by a mukhtar will appear here. Use the Dev
-                  Status Panel to seed MUKHTAR_SIGNED applications for testing.
+                  Use the Dev Status Panel to seed applications for testing.
                 </p>
               </div>
             ) : (
               <div className="space-y-3">
-                {queue.map((item) => {
-                  const sig = officerService.getSignatureForApplication(
-                    item.app.applicationId,
-                  );
+                {activeQueue.map((item) => {
+                  if (activeTab === "approval") {
+                    const sig = officerService.getSignatureForApplication(
+                      item.app.applicationId,
+                    );
+                    const detail = sig
+                      ? `Signed: ${new Date(sig.timestamp).toLocaleDateString(
+                          "en-GB",
+                          {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          },
+                        )}`
+                      : null;
+                    return (
+                      <QueueCard
+                        key={item.app.applicationId}
+                        item={item}
+                        detailLabel={detail}
+                        onClick={() => setSelectedApproval(item)}
+                      />
+                    );
+                  }
+                  // Issuance tab — show the date approved (PROCESSED transition)
+                  const processedAt = item.app.statusHistory?.find(
+                    (h) => h.status === "PROCESSED",
+                  )?.timestamp;
+                  const detail = processedAt
+                    ? `Approved: ${new Date(processedAt).toLocaleDateString(
+                        "en-GB",
+                        {
+                          day: "numeric",
+                          month: "short",
+                          year: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        },
+                      )}`
+                    : null;
                   return (
                     <QueueCard
                       key={item.app.applicationId}
                       item={item}
-                      signedAt={sig?.timestamp ?? null}
-                      onClick={() => setSelectedItem(item)}
+                      detailLabel={detail}
+                      onClick={() => handleOpenIssuance(item)}
                     />
                   );
                 })}
@@ -691,43 +806,77 @@ const OfficerDashboard = () => {
         </div>
       </div>
 
-      {/* Detail Modal */}
-      {selectedItem && !showApproveConfirm && !showCancelModal && (
-        <DetailModal
-          item={selectedItem}
+      {/* Approval Detail Modal */}
+      {selectedApproval && !showApproveConfirm && (
+        <ApprovalDetailModal
+          item={selectedApproval}
           signature={officerService.getSignatureForApplication(
-            selectedItem.app.applicationId,
+            selectedApproval.app.applicationId,
           )}
-          onClose={() => setSelectedItem(null)}
+          onClose={() => setSelectedApproval(null)}
           onApprove={() => setShowApproveConfirm(true)}
         />
       )}
 
       {/* Approval Confirmation Modal */}
-      {selectedItem && showApproveConfirm && (
+      {selectedApproval && showApproveConfirm && (
         <ApproveConfirmModal
-          trackingNumber={selectedItem.app.trackingNumber}
+          trackingNumber={selectedApproval.app.trackingNumber}
           onConfirm={handleApprove}
           onCancel={() => setShowApproveConfirm(false)}
           isProcessing={isProcessing}
         />
       )}
 
-      {/* Old Passport Cancellation Modal (FR-19, RENEWAL only) */}
-      {selectedItem && showCancelModal && (
-        <CancelOldPassportModal
-          trackingNumber={selectedItem.app.trackingNumber}
-          mrzReference={mrzReferenceFor(selectedItem.app.trackingNumber)}
-          onConfirm={handleConfirmRenewalDestruction}
-          onCancel={() => setShowCancelModal(false)}
+      {/* Issuance Detail Modal */}
+      {selectedIssuance && (
+        <IssuanceDetailModal
+          item={selectedIssuance}
+          oldPassport={oldPassportForRenewal}
+          onClose={() => {
+            if (!isProcessing) {
+              setSelectedIssuance(null);
+              setOldPassportForRenewal(null);
+            }
+          }}
+          onIssue={handleIssue}
           isProcessing={isProcessing}
         />
       )}
 
-      {/* Toast */}
       {toast && <Toast toast={toast} onDismiss={dismissToast} />}
     </div>
   );
 };
+
+const TabButton = ({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+}) => (
+  <button
+    onClick={onClick}
+    className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+      active
+        ? "border-blue-600 text-blue-700"
+        : "border-transparent text-gray-500 hover:text-gray-700"
+    }`}
+  >
+    <span>{label}</span>
+    <span
+      className={`text-xs px-2 py-0.5 rounded-full ${
+        active ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-600"
+      }`}
+    >
+      {count}
+    </span>
+  </button>
+);
 
 export default OfficerDashboard;

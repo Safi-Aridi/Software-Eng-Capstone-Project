@@ -7,6 +7,7 @@ export type ApplicationStatus =
   | "VERIFIED"
   | "MUKHTAR_SIGNED"
   | "PROCESSED"
+  | "ISSUED"
   | "RESUBMISSION_REQUIRED"
   | "DELIVERED";
 
@@ -36,8 +37,12 @@ export interface PassportApplication {
     mukhtarName: string;
   };
   biometricCaptured: boolean;
-  // Set when status transitions to DELIVERED; used to compute passport expiry
-  deliveredDate?: string;
+  // For RENEWAL applications: the passportId of the passport being renewed.
+  // Populated when the citizen arrives via ?fromExpiry=<applicationId> by
+  // resolving applicationId → passportId at creation time. Null for NEW
+  // applications and renewals started without the expiry banner — banner
+  // suppression won't apply in that v1 case.
+  renewingPassportId?: string | null;
   statusHistory?: StatusHistoryEntry[];
   // Per-document rejection reasons populated when status is RESUBMISSION_REQUIRED
   resubmissionReasons?: {
@@ -213,88 +218,4 @@ export const applicationService = {
     const suffix = Math.floor(100000 + Math.random() * 900000);
     return `NPIS-2026-${suffix}`;
   },
-
-  // Returns delivered passports approaching expiry (within 6 months) with severity metadata.
-  // TODO: When backend is connected, expiry computation should happen server-side and be
-  // returned as a notification, not a client-side date calculation.
-  getExpiringPassports: async (
-    userId: string,
-  ): Promise<ExpiringPassport[]> => {
-    const apps = readApplications(userId);
-    const now = Date.now();
-    const sixMonthsMs = 1000 * 60 * 60 * 24 * 30 * 6;
-    const result: ExpiringPassport[] = [];
-
-    for (const app of apps) {
-      if (app.currentStatus !== "DELIVERED" || !app.deliveredDate) continue;
-      const delivered = new Date(app.deliveredDate);
-      const expiry = new Date(delivered);
-      expiry.setFullYear(expiry.getFullYear() + app.passportValidity);
-      const expiryTime = expiry.getTime();
-      const msUntil = expiryTime - now;
-      if (msUntil > sixMonthsMs) continue;
-
-      const daysUntilExpiry = Math.ceil(msUntil / (1000 * 60 * 60 * 24));
-      let severity: ExpiringPassport["severity"];
-      if (msUntil <= 0) severity = "expired";
-      else if (daysUntilExpiry < 30) severity = "critical";
-      else if (daysUntilExpiry < 90) severity = "warning";
-      else severity = "info";
-
-      // Honor info-tier dismissal unless severity has escalated
-      const dismissalRaw = localStorage.getItem(
-        `expiry_banner_dismissed_${app.applicationId}`,
-      );
-      if (dismissalRaw && severity === "info") {
-        try {
-          const stored = JSON.parse(dismissalRaw) as {
-            dismissedAt: string;
-            severity: ExpiringPassport["severity"];
-          };
-          if (stored.severity === "info") continue;
-        } catch {
-          // ignore malformed
-        }
-      }
-
-      result.push({
-        application: app,
-        daysUntilExpiry,
-        expiryDate: expiry.toISOString(),
-        severity,
-      });
-    }
-
-    // Order: critical/expired → warning → info
-    const order: Record<ExpiringPassport["severity"], number> = {
-      expired: 0,
-      critical: 1,
-      warning: 2,
-      info: 3,
-    };
-    result.sort((a, b) => order[a.severity] - order[b.severity]);
-    return result;
-  },
-
-  // Persists info-tier banner dismissal alongside the severity at dismissal time
-  // so escalation (e.g., info → warning) can clear the flag.
-  // TODO: Backend should expose a /notifications/:id/dismiss endpoint instead.
-  dismissExpiryBanner: async (
-    applicationId: string,
-    severity: ExpiringPassport["severity"] = "info",
-  ): Promise<void> => {
-    localStorage.setItem(
-      `expiry_banner_dismissed_${applicationId}`,
-      JSON.stringify({ dismissedAt: new Date().toISOString(), severity }),
-    );
-  },
 };
-
-export type ExpirySeverity = "info" | "warning" | "critical" | "expired";
-
-export interface ExpiringPassport {
-  application: PassportApplication;
-  daysUntilExpiry: number;
-  expiryDate: string;
-  severity: ExpirySeverity;
-}

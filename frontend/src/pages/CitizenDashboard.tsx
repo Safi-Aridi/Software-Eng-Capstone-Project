@@ -5,8 +5,11 @@ import {
   applicationService,
   type PassportApplication,
   type ApplicationStatus,
-  type ExpiringPassport,
 } from "../services/applicationService";
+import {
+  passportService,
+  type ExpiringPassport,
+} from "../services/passportService";
 import { paymentService } from "../services/paymentService";
 import { receiptService } from "../services/receiptService";
 import AccountLockedPanel from "../components/kyc/AccountLockedPanel";
@@ -106,6 +109,7 @@ const STATUS_STYLES: Record<ApplicationStatus, string> = {
   VERIFIED: "bg-green-100 text-green-800",
   MUKHTAR_SIGNED: "bg-blue-100 text-blue-800",
   PROCESSED: "bg-green-100 text-green-800",
+  ISSUED: "bg-emerald-100 text-emerald-800",
   RESUBMISSION_REQUIRED: "bg-red-100 text-red-800",
   DELIVERED: "bg-green-100 text-green-800",
 };
@@ -114,7 +118,8 @@ const STATUS_LABELS: Record<ApplicationStatus, string> = {
   PENDING_REVIEW: "Pending Review",
   VERIFIED: "Verified",
   MUKHTAR_SIGNED: "Mukhtar Signed",
-  PROCESSED: "Processed",
+  PROCESSED: "Approved for Printing",
+  ISSUED: "Passport Issued",
   RESUBMISSION_REQUIRED: "Resubmission Required",
   DELIVERED: "Delivered",
 };
@@ -285,7 +290,7 @@ const AcceptedDashboard = () => {
       .then(() =>
         applicationService.getApplications(userId).then(setApplications),
       );
-    applicationService.getExpiringPassports(userId).then(setExpiringPassports);
+    passportService.getExpiringPassports(userId).then(setExpiringPassports);
   }, [userId]);
 
   const handleReceiptError = (msg: string) => {
@@ -293,10 +298,10 @@ const AcceptedDashboard = () => {
     setTimeout(() => setReceiptError(null), 3000);
   };
 
-  const handleDismissExpiry = async (applicationId: string) => {
-    await applicationService.dismissExpiryBanner(applicationId, "info");
+  const handleDismissExpiry = async (passportId: string) => {
+    await passportService.dismissExpiryBanner(passportId, "info");
     setExpiringPassports((prev) =>
-      prev.filter((e) => e.application.applicationId !== applicationId),
+      prev.filter((e) => e.passport.passportId !== passportId),
     );
   };
 
@@ -309,12 +314,12 @@ const AcceptedDashboard = () => {
     <div className="max-w-4xl mx-auto p-6">
       {expiringPassports.map((e) => (
         <ExpiryBanner
-          key={e.application.applicationId}
+          key={e.passport.passportId}
           entry={e}
-          onDismiss={() => handleDismissExpiry(e.application.applicationId)}
+          onDismiss={() => handleDismissExpiry(e.passport.passportId)}
           onRenew={() =>
             navigate(
-              `/application/checklist?type=RENEWAL&fromExpiry=${e.application.applicationId}`,
+              `/application/checklist?type=RENEWAL&fromExpiry=${e.passport.sourceApplicationId}`,
             )
           }
         />
@@ -594,7 +599,7 @@ const ExpiryBanner = ({
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium">{buildExpiryMessage(entry)}</p>
         <p className="text-xs opacity-75 mt-1 font-mono">
-          {entry.application.trackingNumber}
+          {entry.passport.bookletNumber}
         </p>
       </div>
       <div className="flex items-center gap-2 shrink-0">
