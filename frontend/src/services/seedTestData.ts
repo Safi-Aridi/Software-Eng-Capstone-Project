@@ -23,7 +23,7 @@ const TEST_USERS: StoredUser[] = [
     mobileNumber: "70123456",
   },
   {
-    userId: "user_002",
+    userId: "a1b2c3d4-0000-0000-0000-000000000001",
     email: "accepted@test.com",
     password: "test123",
     fullName: "Sara Mansour",
@@ -40,7 +40,7 @@ const TEST_USERS: StoredUser[] = [
 
 const KYC_STATUSES: Record<string, string> = {
   user_001: "PENDING_IDENTITY_VERIFICATION",
-  user_002: "IDENTITY_VERIFIED",
+  "a1b2c3d4-0000-0000-0000-000000000001": "IDENTITY_VERIFIED",
   user_003: "IDENTITY_REJECTED",
 };
 
@@ -50,7 +50,7 @@ const IDENTITY_DATA: Record<string, object> = {
     registryNumber: "12345",
     dateOfBirth: "1990-05-15",
   },
-  user_002: {
+  "a1b2c3d4-0000-0000-0000-000000000001": {
     fullName: "Sara Mansour",
     registryNumber: "67890",
     dateOfBirth: "1995-11-22",
@@ -86,7 +86,7 @@ const AUTHORIZED_USERS: AuthorizedStoredUser[] = [
 const APPS_USER_002: PassportApplication[] = [
   {
     applicationId: "app_seed_002_001",
-    userId: "user_002",
+    userId: "a1b2c3d4-0000-0000-0000-000000000001",
     applicationType: "NEW",
     currentStatus: "MUKHTAR_SIGNED",
     submissionDate: "2026-04-20T09:00:00.000Z",
@@ -112,7 +112,7 @@ const APPS_USER_002: PassportApplication[] = [
   },
   {
     applicationId: "app_seed_002_002",
-    userId: "user_002",
+    userId: "a1b2c3d4-0000-0000-0000-000000000001",
     applicationType: "RENEWAL",
     currentStatus: "PENDING_REVIEW",
     submissionDate: "2026-04-28T10:00:00.000Z",
@@ -137,7 +137,7 @@ const APPS_USER_002: PassportApplication[] = [
   // ── VERIFIED apps for mukhtar queue ──────────────────────────────────────
   {
     applicationId: "app_seed_verified_001",
-    userId: "user_002",
+    userId: "a1b2c3d4-0000-0000-0000-000000000001",
     applicationType: "NEW",
     currentStatus: "VERIFIED",
     submissionDate: "2026-04-15T08:00:00.000Z",
@@ -162,7 +162,7 @@ const APPS_USER_002: PassportApplication[] = [
   },
   {
     applicationId: "app_seed_verified_002",
-    userId: "user_002",
+    userId: "a1b2c3d4-0000-0000-0000-000000000001",
     applicationType: "RENEWAL",
     currentStatus: "VERIFIED",
     submissionDate: "2026-04-16T11:00:00.000Z",
@@ -187,7 +187,7 @@ const APPS_USER_002: PassportApplication[] = [
   },
   {
     applicationId: "app_seed_verified_003",
-    userId: "user_002",
+    userId: "a1b2c3d4-0000-0000-0000-000000000001",
     applicationType: "NEW",
     currentStatus: "VERIFIED",
     submissionDate: "2026-04-17T14:00:00.000Z",
@@ -213,7 +213,7 @@ const APPS_USER_002: PassportApplication[] = [
   // ── MUKHTAR_SIGNED apps for officer queue ─────────────────────────────────
   {
     applicationId: "app_seed_signed_001",
-    userId: "user_002",
+    userId: "a1b2c3d4-0000-0000-0000-000000000001",
     applicationType: "NEW",
     currentStatus: "MUKHTAR_SIGNED",
     submissionDate: "2026-04-10T09:00:00.000Z",
@@ -239,7 +239,7 @@ const APPS_USER_002: PassportApplication[] = [
   },
   {
     applicationId: "app_seed_signed_002",
-    userId: "user_002",
+    userId: "a1b2c3d4-0000-0000-0000-000000000001",
     applicationType: "RENEWAL",
     currentStatus: "MUKHTAR_SIGNED",
     submissionDate: "2026-04-11T10:30:00.000Z",
@@ -288,28 +288,31 @@ const APPS_USER_001: PassportApplication[] = [
     biometricCaptured: true,
     statusHistory: [
       { status: "PENDING_REVIEW", timestamp: "2026-04-23T08:00:00.000Z" },
-      { status: "RESUBMISSION_REQUIRED", timestamp: "2026-04-25T16:00:00.000Z" },
+      {
+        status: "RESUBMISSION_REQUIRED",
+        timestamp: "2026-04-25T16:00:00.000Z",
+      },
     ],
   },
 ];
 
 // Mock mukhtar signatures for the pre-seeded MUKHTAR_SIGNED applications
 const SEED_SIGNATURES: Record<string, object> = {
-  "app_seed_002_001": {
+  app_seed_002_001: {
     signatureId: "sig_app_seed_002_001_seed",
     algorithm: "RSA-SHA256",
     timestamp: "2026-04-25T14:00:00.000Z",
     signedBy: "mukhtar_001",
     digest: "mock-digest-a1b2c3d4e5f6",
   },
-  "app_seed_signed_001": {
+  app_seed_signed_001: {
     signatureId: "sig_app_seed_signed_001_seed",
     algorithm: "RSA-SHA256",
     timestamp: "2026-04-14T13:00:00.000Z",
     signedBy: "mukhtar_001",
     digest: "mock-digest-f6e5d4c3b2a1",
   },
-  "app_seed_signed_002": {
+  app_seed_signed_002: {
     signatureId: "sig_app_seed_signed_002_seed",
     algorithm: "RSA-SHA256",
     timestamp: "2026-04-15T15:00:00.000Z",
@@ -355,7 +358,7 @@ const buildExpiryDemoApps = (): PassportApplication[] => {
   return [
     {
       applicationId: "app_seed_002_expiry_info",
-      userId: "user_002",
+      userId: "a1b2c3d4-0000-0000-0000-000000000001",
       applicationType: "NEW",
       currentStatus: "DELIVERED",
       submissionDate: new Date(now - (4.5 * yearMs + monthMs)).toISOString(),
@@ -373,7 +376,7 @@ const buildExpiryDemoApps = (): PassportApplication[] => {
     },
     {
       applicationId: "app_seed_002_expiry_warning",
-      userId: "user_002",
+      userId: "a1b2c3d4-0000-0000-0000-000000000001",
       applicationType: "NEW",
       currentStatus: "DELIVERED",
       submissionDate: new Date(now - (4 * yearMs + 11 * monthMs)).toISOString(),
@@ -391,7 +394,7 @@ const buildExpiryDemoApps = (): PassportApplication[] => {
     },
     {
       applicationId: "app_seed_002_expiry_expired",
-      userId: "user_002",
+      userId: "a1b2c3d4-0000-0000-0000-000000000001",
       applicationType: "NEW",
       currentStatus: "DELIVERED",
       submissionDate: new Date(now - (5 * yearMs + 2 * monthMs)).toISOString(),
@@ -422,7 +425,7 @@ const buildExpiryDemoPassports = (): Passport[] => {
   return [
     {
       passportId: "pp_seed_002_info",
-      userId: "user_002",
+      userId: "a1b2c3d4-0000-0000-0000-000000000001",
       sourceApplicationId: "app_seed_002_expiry_info",
       bookletNumber: "LB-7000001",
       status: "ACTIVE",
@@ -433,7 +436,7 @@ const buildExpiryDemoPassports = (): Passport[] => {
     },
     {
       passportId: "pp_seed_002_warning",
-      userId: "user_002",
+      userId: "a1b2c3d4-0000-0000-0000-000000000001",
       sourceApplicationId: "app_seed_002_expiry_warning",
       bookletNumber: "LB-7000002",
       status: "ACTIVE",
@@ -444,7 +447,7 @@ const buildExpiryDemoPassports = (): Passport[] => {
     },
     {
       passportId: "pp_seed_002_expired",
-      userId: "user_002",
+      userId: "a1b2c3d4-0000-0000-0000-000000000001",
       sourceApplicationId: "app_seed_002_expiry_expired",
       bookletNumber: "LB-7000003",
       status: "ACTIVE",
@@ -460,7 +463,7 @@ const buildExpiryDemoPassports = (): Passport[] => {
 
 const buildUnpaidApp = (): PassportApplication => ({
   applicationId: "app_seed_002_unpaid",
-  userId: "user_002",
+  userId: "a1b2c3d4-0000-0000-0000-000000000001",
   applicationType: "NEW",
   currentStatus: "PENDING_REVIEW",
   submissionDate: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
@@ -560,7 +563,10 @@ export const seedTestDataIfNeeded = (): void => {
   if (!existing || JSON.parse(existing).length === 0) {
     localStorage.setItem(USERS_KEY, JSON.stringify(TEST_USERS));
     for (const user of TEST_USERS) {
-      localStorage.setItem(kycStatusKey(user.userId), KYC_STATUSES[user.userId]);
+      localStorage.setItem(
+        kycStatusKey(user.userId),
+        KYC_STATUSES[user.userId],
+      );
       localStorage.setItem(
         identityDataKey(user.userId),
         JSON.stringify(IDENTITY_DATA[user.userId]),
@@ -571,11 +577,14 @@ export const seedTestDataIfNeeded = (): void => {
   // Seed authorized users (mukhtar + officer) — idempotent
   const existingAuth = localStorage.getItem(AUTHORIZED_USERS_KEY);
   if (!existingAuth || JSON.parse(existingAuth).length === 0) {
-    localStorage.setItem(AUTHORIZED_USERS_KEY, JSON.stringify(AUTHORIZED_USERS));
+    localStorage.setItem(
+      AUTHORIZED_USERS_KEY,
+      JSON.stringify(AUTHORIZED_USERS),
+    );
   }
 
   // Seed applications by ID — safe to call every load
-  ensureApplicationsExist("user_002", [
+  ensureApplicationsExist("a1b2c3d4-0000-0000-0000-000000000001", [
     ...APPS_USER_002,
     buildUnpaidApp(),
     ...buildExpiryDemoApps(),
@@ -584,7 +593,10 @@ export const seedTestDataIfNeeded = (): void => {
 
   // Seed passport records for the three near-expiry demo applications so the
   // citizen expiry banner has data to display via passportService.
-  ensurePassportsExist("user_002", buildExpiryDemoPassports());
+  ensurePassportsExist(
+    "a1b2c3d4-0000-0000-0000-000000000001",
+    buildExpiryDemoPassports(),
+  );
 
   // Seed mukhtar signatures for pre-signed applications
   seedSignaturesIfNeeded();

@@ -1,4 +1,12 @@
 import { notificationService } from "./notificationService";
+import { apiClient } from "./apiClient";
+import {
+  mapApiApplicationToFrontend,
+  frontendAppTypeToBackend,
+  frontendStatusToBackend,
+} from "../utils/apiAdapters";
+
+const USE_MOCK = import.meta.env.VITE_USE_MOCK_APPLICATIONS === "true";
 
 export type ApplicationType = "NEW" | "RENEWAL";
 
@@ -90,33 +98,86 @@ const readApplications = (userId: string): PassportApplication[] => {
 
 export const applicationService = {
   // FR-10 — List citizen applications
-  // TODO: GET /api/applications?role=citizen when backend is ready
   getApplications: async (userId: string): Promise<PassportApplication[]> => {
-    return readApplications(userId);
+    if (USE_MOCK) {
+      return readApplications(userId);
+    }
+    const rows = await apiClient.get<unknown[]>("/applications");
+    return rows
+      .map(mapApiApplicationToFrontend)
+      .filter((a) => a.userId === userId);
   },
 
   // FR-10 — Get single application by ID
-  // TODO: GET /api/applications/:id when backend is ready
   getApplicationById: async (
     userId: string,
     applicationId: string,
   ): Promise<PassportApplication | null> => {
-    return (
-      readApplications(userId).find((a) => a.applicationId === applicationId) ??
-      null
-    );
+    if (USE_MOCK) {
+      return (
+        readApplications(userId).find((a) => a.applicationId === applicationId) ??
+        null
+      );
+    }
+    try {
+      const raw = await apiClient.get<unknown>(`/applications/${applicationId}`);
+      return mapApiApplicationToFrontend(raw);
+    } catch {
+      return null;
+    }
   },
 
   // FR-06, FR-08 — Submit new passport application
-  // TODO: POST /api/applications when backend is ready
   createApplication: async (
     userId: string,
     application: PassportApplication,
   ): Promise<PassportApplication> => {
-    const existing = readApplications(userId);
-    existing.push(application);
-    localStorage.setItem(applicationsKey(userId), JSON.stringify(existing));
-    return application;
+    if (USE_MOCK) {
+      const existing = readApplications(userId);
+      existing.push(application);
+      localStorage.setItem(applicationsKey(userId), JSON.stringify(existing));
+      return application;
+    }
+    const response = await apiClient.post<{ application: unknown }>(
+      "/applications",
+      {
+        citizenId: application.userId,
+        applicationType: frontendAppTypeToBackend(application.applicationType),
+        validityId: application.passportValidity === 10 ? 2 : 1,
+      },
+    );
+    return mapApiApplicationToFrontend(response.application);
+  },
+
+  // FR-10 — Update application status
+  updateApplicationStatus: async (
+    applicationId: string,
+    status: ApplicationStatus,
+  ): Promise<void> => {
+    if (USE_MOCK) {
+      // Mock: scan all application buckets and update in-place
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key?.startsWith("applications_")) continue;
+        try {
+          const apps: PassportApplication[] = JSON.parse(
+            localStorage.getItem(key) || "[]",
+          );
+          const idx = apps.findIndex((a) => a.applicationId === applicationId);
+          if (idx >= 0) {
+            apps[idx] = { ...apps[idx], currentStatus: status };
+            localStorage.setItem(key, JSON.stringify(apps));
+            break;
+          }
+        } catch {
+          // skip malformed entries
+        }
+      }
+      return;
+    }
+    await apiClient.put(`/applications/${applicationId}`, {
+      currentStatus: frontendStatusToBackend(status),
+    });
   },
 
   // FR-22 — Document resubmission; also resets status to PENDING_REVIEW

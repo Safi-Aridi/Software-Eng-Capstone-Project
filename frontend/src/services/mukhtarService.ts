@@ -3,6 +3,10 @@
 import type { PassportApplication, EnrichedApplication } from "./applicationService";
 import { getIdentityForUser } from "./applicationService";
 import { notificationService } from "./notificationService";
+import { apiClient } from "./apiClient";
+import { mapApiApplicationToFrontend } from "../utils/apiAdapters";
+
+const USE_MOCK = import.meta.env.VITE_USE_MOCK_MUKHTAR === "true";
 
 export interface MukhtarQueueItem {
   applicationId: string;
@@ -71,59 +75,78 @@ const updateApplicationInStorage = (
 
 export const mukhtarService = {
   // FR-13 — Retrieve applications pending mukhtar endorsement (enriched with citizen identity)
-  // TODO: GET /api/mukhtar/applications?status=VERIFIED
   getPendingApplicationsFull: async (
     _mukhtarId: string,
   ): Promise<EnrichedApplication[]> => {
-    const apps = scanApplicationsByStatus("VERIFIED");
-    return apps.map((app) => ({
-      app,
-      citizenIdentity: getIdentityForUser(app.userId),
+    if (USE_MOCK) {
+      const apps = scanApplicationsByStatus("VERIFIED");
+      return apps.map((app) => ({
+        app,
+        citizenIdentity: getIdentityForUser(app.userId),
+      }));
+    }
+    const rows = await apiClient.get<unknown[]>("/mukhtar/pending");
+    return rows.map((raw) => ({
+      app: mapApiApplicationToFrontend(raw),
+      // Citizen identity lives only in localStorage until the KYC endpoint is wired
+      citizenIdentity: null,
     }));
   },
 
   // FR-15, FR-16 — Electronically sign and update application status to MUKHTAR_SIGNED
-  // TODO: POST /api/mukhtar/applications/:id/sign (FR-15, FR-16)
   signApplication: async (
     mukhtarId: string,
     applicationId: string,
   ): Promise<void> => {
-    const signature: MukhtarSignature = {
-      signatureId: `sig_${applicationId}_${Date.now()}`,
-      algorithm: "RSA-SHA256",
-      timestamp: new Date().toISOString(),
-      signedBy: mukhtarId,
-      digest: `mock-digest-${Math.random().toString(36).slice(2)}`,
-    };
-
-    // Persist signature separately for officer dashboard lookup
-    localStorage.setItem(signatureKey(applicationId), JSON.stringify(signature));
-
-    let citizenUserId: string | null = null;
-    let trackingNumber = "";
-    updateApplicationInStorage(applicationId, (app) => {
-      citizenUserId = app.userId;
-      trackingNumber = app.trackingNumber;
-      return {
-        ...app,
-        currentStatus: "MUKHTAR_SIGNED",
-        statusHistory: [
-          ...(app.statusHistory ?? []),
-          { status: "MUKHTAR_SIGNED" as const, timestamp: signature.timestamp },
-        ],
+    if (USE_MOCK) {
+      const signature: MukhtarSignature = {
+        signatureId: `sig_${applicationId}_${Date.now()}`,
+        algorithm: "RSA-SHA256",
+        timestamp: new Date().toISOString(),
+        signedBy: mukhtarId,
+        digest: `mock-digest-${Math.random().toString(36).slice(2)}`,
       };
-    });
 
-    // TODO: Remove when backend is connected — NestJS handles notification creation server-side
-    if (citizenUserId) {
-      notificationService.create(citizenUserId, {
-        userId: citizenUserId,
-        type: "STATUS_UPDATE",
-        title: "Mukhtar Signed",
-        message: `Your application ${trackingNumber} has been signed by your Mukhtar and is being processed by General Security.`,
-        applicationId,
+      // Persist signature separately for officer dashboard lookup
+      localStorage.setItem(signatureKey(applicationId), JSON.stringify(signature));
+
+      let citizenUserId: string | null = null;
+      let trackingNumber = "";
+      updateApplicationInStorage(applicationId, (app) => {
+        citizenUserId = app.userId;
+        trackingNumber = app.trackingNumber;
+        return {
+          ...app,
+          currentStatus: "MUKHTAR_SIGNED",
+          statusHistory: [
+            ...(app.statusHistory ?? []),
+            { status: "MUKHTAR_SIGNED" as const, timestamp: signature.timestamp },
+          ],
+        };
       });
+
+      // TODO: Remove when backend is connected — NestJS handles notification creation server-side
+      if (citizenUserId) {
+        notificationService.create(citizenUserId, {
+          userId: citizenUserId,
+          type: "STATUS_UPDATE",
+          title: "Mukhtar Signed",
+          message: `Your application ${trackingNumber} has been signed by your Mukhtar and is being processed by General Security.`,
+          applicationId,
+        });
+      }
+      return;
     }
+
+    await apiClient.post(`/applications/${applicationId}/sign`, { mukhtarId });
+    // TODO: Remove when backend is connected — NestJS handles notification creation server-side
+    notificationService.create("", {
+      userId: "",
+      type: "STATUS_UPDATE",
+      title: "Mukhtar Signed",
+      message: `Application ${applicationId} has been signed by the Mukhtar.`,
+      applicationId,
+    });
   },
 
   // FR-16, FR-22 — Request document resubmission with per-document reasons

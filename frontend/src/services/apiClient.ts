@@ -1,40 +1,40 @@
-// TODO: Replace mock implementations in all services with calls through this client
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/api";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
 
 export class ApiError extends Error {
-  statusCode: number;
-  field?: string;
+  status: number;
 
-  constructor(message: string, statusCode: number, field?: string) {
+  constructor(message: string, status: number) {
     super(message);
     this.name = "ApiError";
-    this.statusCode = statusCode;
-    this.field = field;
+    this.status = status;
   }
 }
 
 const getAuthHeaders = (): HeadersInit => {
-  const session = localStorage.getItem("npis_user");
-  if (!session) return { "Content-Type": "application/json" };
-  try {
-    const { token } = JSON.parse(session);
-    return {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    };
-  } catch {
-    return { "Content-Type": "application/json" };
-  }
+  const token = localStorage.getItem("npis_token");
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return headers;
+};
+
+const handleUnauthorized = (): void => {
+  localStorage.removeItem("npis_token");
+  localStorage.removeItem("npis_session");
+  window.location.href = "/";
 };
 
 const parseResponse = async <T>(res: Response): Promise<T> => {
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new ApiError("Unauthorized", 401);
+  }
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new ApiError(
       (body as { message?: string }).message ||
         `Request failed with status ${res.status}`,
       res.status,
-      (body as { field?: string }).field,
     );
   }
   return body as T;

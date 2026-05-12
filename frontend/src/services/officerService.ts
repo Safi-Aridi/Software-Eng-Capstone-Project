@@ -4,6 +4,10 @@ import type { PassportApplication, EnrichedApplication } from "./applicationServ
 import { getIdentityForUser } from "./applicationService";
 import { mukhtarService } from "./mukhtarService";
 import { notificationService } from "./notificationService";
+import { apiClient } from "./apiClient";
+import { mapApiApplicationToFrontend } from "../utils/apiAdapters";
+
+const USE_MOCK = import.meta.env.VITE_USE_MOCK_OFFICER === "true";
 
 const scanApplicationsByStatus = (
   status: string,
@@ -49,14 +53,21 @@ const updateApplicationInStorage = (
 
 export const officerService = {
   // FR-17 — Retrieve applications awaiting final officer processing (enriched)
-  // TODO: GET /api/officer/applications?status=MUKHTAR_SIGNED
   getProcessingQueueFull: async (
     _officerId: string,
   ): Promise<EnrichedApplication[]> => {
-    const apps = scanApplicationsByStatus("MUKHTAR_SIGNED");
-    return apps.map((app) => ({
-      app,
-      citizenIdentity: getIdentityForUser(app.userId),
+    if (USE_MOCK) {
+      const apps = scanApplicationsByStatus("MUKHTAR_SIGNED");
+      return apps.map((app) => ({
+        app,
+        citizenIdentity: getIdentityForUser(app.userId),
+      }));
+    }
+    const rows = await apiClient.get<unknown[]>("/officer/pending");
+    return rows.map((raw) => ({
+      app: mapApiApplicationToFrontend(raw),
+      // Citizen identity lives only in localStorage until the KYC endpoint is wired
+      citizenIdentity: null,
     }));
   },
 
@@ -69,6 +80,7 @@ export const officerService = {
   },
 
   // FR-18 (extension) — Retrieve applications awaiting passport issuance (PROCESSED → ISSUED)
+  // Stays mocked — no backend endpoint for issuance queue yet
   // TODO: GET /api/officer/applications?status=PROCESSED
   getIssuanceQueueFull: async (
     _officerId: string,
@@ -81,42 +93,57 @@ export const officerService = {
   },
 
   // FR-18 — Final approval; transitions application to PROCESSED
-  // TODO: POST /api/officer/applications/:id/approve (FR-18)
   approveApplication: async (
     _officerId: string,
     applicationId: string,
     options?: { suppressNotification?: boolean },
   ): Promise<{ success: boolean }> => {
-    const timestamp = new Date().toISOString();
-    let citizenUserId: string | null = null;
-    let trackingNumber = "";
-    updateApplicationInStorage(applicationId, (app) => {
-      citizenUserId = app.userId;
-      trackingNumber = app.trackingNumber;
-      return {
-        ...app,
-        currentStatus: "PROCESSED",
-        statusHistory: [
-          ...(app.statusHistory ?? []),
-          { status: "PROCESSED" as const, timestamp },
-        ],
-      };
-    });
-
-    // TODO: Remove when backend is connected — NestJS handles notification creation server-side
-    if (citizenUserId && !options?.suppressNotification) {
-      notificationService.create(citizenUserId, {
-        userId: citizenUserId,
-        type: "STATUS_UPDATE",
-        title: "Application Approved for Printing",
-        message: `Your application ${trackingNumber} has been approved and sent for passport printing.`,
-        applicationId,
+    if (USE_MOCK) {
+      const timestamp = new Date().toISOString();
+      let citizenUserId: string | null = null;
+      let trackingNumber = "";
+      updateApplicationInStorage(applicationId, (app) => {
+        citizenUserId = app.userId;
+        trackingNumber = app.trackingNumber;
+        return {
+          ...app,
+          currentStatus: "PROCESSED",
+          statusHistory: [
+            ...(app.statusHistory ?? []),
+            { status: "PROCESSED" as const, timestamp },
+          ],
+        };
       });
+
+      // TODO: Remove when backend is connected — NestJS handles notification creation server-side
+      if (citizenUserId && !options?.suppressNotification) {
+        notificationService.create(citizenUserId, {
+          userId: citizenUserId,
+          type: "STATUS_UPDATE",
+          title: "Application Approved for Printing",
+          message: `Your application ${trackingNumber} has been approved and sent for passport printing.`,
+          applicationId,
+        });
+      }
+      return { success: true };
     }
+
+    await apiClient.post(`/applications/${applicationId}/approve`, {
+      officerId: _officerId,
+    });
+    // TODO: Remove when backend is connected — NestJS handles notification creation server-side
+    notificationService.create("", {
+      userId: "",
+      type: "STATUS_UPDATE",
+      title: "Application Approved for Printing",
+      message: `Application ${applicationId} has been approved and sent for passport printing.`,
+      applicationId,
+    });
     return { success: true };
   },
 
   // FR-19 — Record old passport cancellation; emits combined renewal notification
+  // Stays mocked — no backend endpoint yet
   // TODO: POST /api/officer/applications/:id/cancel-old-passport (FR-19)
   cancelOldPassport: async (
     officerId: string,
@@ -172,9 +199,7 @@ export const officerService = {
   },
 
   // FR-18 (extension) — Second officer action: passport issuance.
-  // Transitions PROCESSED → ISSUED and emits the citizen notification.
-  // Caller is responsible for creating the Passport record and cancelling the
-  // old passport (renewal flow) via passportService before invoking this.
+  // Stays mocked — no backend endpoint for issuance yet.
   // TODO: POST /api/officer/applications/:id/issue
   issueApplication: async (
     _officerId: string,
