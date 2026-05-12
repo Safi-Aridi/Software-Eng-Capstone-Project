@@ -55,6 +55,179 @@ const SESSION_KEY = "npis_user";
 const USERS_KEY = "npis_users";
 const AUTHORIZED_USERS_KEY = "npis_authorized_users";
 
+// Real-API session keys (used when VITE_USE_MOCK_AUTH=false)
+const API_TOKEN_KEY = "npis_token";
+const API_SESSION_KEY = "npis_session";
+
+const USE_MOCK_AUTH =
+  (import.meta.env.VITE_USE_MOCK_AUTH ?? "true") !== "false";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
+
+interface ApiUser {
+  id: string;
+  email: string;
+  role: UserRole;
+  fullName?: string | null;
+}
+
+interface ApiLoginSuccess {
+  success: true;
+  token: string;
+  user: ApiUser;
+}
+
+interface ApiLoginError {
+  message?: string;
+  isLocked?: boolean;
+  failedAttempts?: number;
+  remainingAttempts?: number;
+  lockedUntil?: string;
+}
+
+const sessionRecordFromApi = (token: string, user: ApiUser): MockUser => ({
+  token,
+  role: user.role,
+  accountStatus: "ACTIVE",
+  user: {
+    id: user.id,
+    fullName: user.fullName || "",
+    email: user.email,
+  },
+});
+
+const persistApiSession = (token: string, user: ApiUser): MockUser => {
+  localStorage.setItem(API_TOKEN_KEY, token);
+  localStorage.setItem(
+    API_SESSION_KEY,
+    JSON.stringify({
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      fullName: user.fullName || "",
+      isAuthenticated: true,
+    }),
+  );
+  return sessionRecordFromApi(token, user);
+};
+
+const apiLogin = async (
+  email: string,
+  password: string,
+): Promise<LoginResult> => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const body = (await res.json().catch(() => ({}))) as
+      | ApiLoginSuccess
+      | ApiLoginError;
+    if (!res.ok) {
+      const err = body as ApiLoginError;
+      return {
+        success: false,
+        message: err.message || "Invalid credentials",
+        failedAttempts: err.failedAttempts ?? 0,
+        remainingAttempts: err.remainingAttempts ?? MAX_LOGIN_ATTEMPTS,
+        isLocked: !!err.isLocked,
+        ...(err.isLocked && { lockedUserId: email }),
+      };
+    }
+    const ok = body as ApiLoginSuccess;
+    const mockUser = persistApiSession(ok.token, ok.user);
+    return {
+      success: true,
+      message: "Login successful",
+      failedAttempts: 0,
+      remainingAttempts: MAX_LOGIN_ATTEMPTS,
+      isLocked: false,
+      user: mockUser,
+    };
+  } catch {
+    return {
+      success: false,
+      message: "Unable to reach authentication server",
+      failedAttempts: 0,
+      remainingAttempts: MAX_LOGIN_ATTEMPTS,
+      isLocked: false,
+    };
+  }
+};
+
+const apiRegister = async (data: {
+  email: string;
+  password: string;
+  fullName?: string;
+  mobileNumber?: string;
+  role?: UserRole;
+}): Promise<MockUser> => {
+  const res = await fetch(`${API_BASE_URL}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: data.email,
+      password: data.password,
+      fullName: data.fullName,
+      mobile: data.mobileNumber,
+      role: data.role ?? "citizen",
+    }),
+  });
+  const body = (await res.json().catch(() => ({}))) as
+    | ApiLoginSuccess
+    | ApiLoginError;
+  if (!res.ok) {
+    throw new Error(
+      (body as ApiLoginError).message || "Registration failed",
+    );
+  }
+  const ok = body as ApiLoginSuccess;
+  return persistApiSession(ok.token, ok.user);
+};
+
+const apiLogout = async (): Promise<void> => {
+  try {
+    const token = localStorage.getItem(API_TOKEN_KEY);
+    await fetch(`${API_BASE_URL}/auth/logout`, {
+      method: "POST",
+      headers: token
+        ? { Authorization: `Bearer ${token}` }
+        : undefined,
+    });
+  } catch {
+    // ignore — stateless logout
+  }
+  localStorage.removeItem(API_TOKEN_KEY);
+  localStorage.removeItem(API_SESSION_KEY);
+};
+
+const readApiSession = (): MockUser | null => {
+  const stored = localStorage.getItem(API_SESSION_KEY);
+  if (!stored) return null;
+  try {
+    const s = JSON.parse(stored) as {
+      userId: string;
+      email: string;
+      role: UserRole;
+      fullName: string;
+    };
+    const token = localStorage.getItem(API_TOKEN_KEY) || "";
+    return {
+      token,
+      role: s.role,
+      accountStatus: "ACTIVE",
+      user: {
+        id: s.userId,
+        email: s.email,
+        fullName: s.fullName,
+      },
+    };
+  } catch {
+    return null;
+  }
+};
+
 // FR-05.1 — account lockout after 3 failed login attempts; auto-unlock after 15 minutes
 const LOCK_DURATION_MS = 15 * 60 * 1000;
 const MAX_LOGIN_ATTEMPTS = 3;
@@ -142,22 +315,23 @@ const lockHasExpired = (user: StoredUser): boolean => {
 
 export const authService = {
   // FR-02 — Citizen login
-  // TODO: return apiClient.post('/auth/login', { identifier, password });
   login: async (
     identifier: string,
     password: string,
   ): Promise<LoginResult> => {
+    if (!USE_MOCK_AUTH) return apiLogin(identifier, password);
     return authService.loginCitizen(identifier, password);
   },
 
   // FR-03 — Citizen registration
-  // TODO: return apiClient.post('/auth/register', data);
   register: async (data: {
     mobileNumber: string;
     email: string;
     password: string;
     fullName?: string;
   }): Promise<MockUser> => {
+    if (!USE_MOCK_AUTH)
+      return apiRegister({ ...data, role: "citizen" });
     return authService.registerCitizen(data);
   },
 
@@ -364,6 +538,10 @@ export const authService = {
   },
 
   getCurrentUser: (): MockUser | null => {
+    if (!USE_MOCK_AUTH) {
+      const api = readApiSession();
+      if (api) return api;
+    }
     const stored = localStorage.getItem(SESSION_KEY);
     if (!stored) return null;
     try {
@@ -375,6 +553,9 @@ export const authService = {
 
   // Only removes the active session — other users' scoped data is preserved
   logout: (): void => {
+    if (!USE_MOCK_AUTH) {
+      void apiLogout();
+    }
     localStorage.removeItem(SESSION_KEY);
   },
 

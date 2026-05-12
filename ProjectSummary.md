@@ -939,7 +939,7 @@ The following backend changes are needed before `VITE_USE_MOCK_AUTH` can be set 
 
 | Flag | Current Value | Effect when `true` | Effect when `false` |
 |---|---|---|---|
-| `VITE_USE_MOCK_AUTH` | `true` | localStorage mock login/register | Real `POST /api/auth/login` and `/register` |
+| `VITE_USE_MOCK_AUTH` | `false` | localStorage mock login/register | Real `POST /api/auth/login` and `/register` |
 | `VITE_USE_MOCK_APPLICATIONS` | `false` | localStorage CRUD | Real `GET/POST/PUT /api/applications` |
 | `VITE_USE_MOCK_MUKHTAR` | `false` | localStorage scan | Real `GET /api/mukhtar/pending` + sign endpoint |
 | `VITE_USE_MOCK_OFFICER` | `false` | localStorage scan | Real `GET /api/officer/pending` + approve endpoint |
@@ -947,3 +947,30 @@ The following backend changes are needed before `VITE_USE_MOCK_AUTH` can be set 
 | `VITE_USE_MOCK_NOTIFICATIONS` | `true` | Per-user localStorage notifications | Real `GET /api/notifications` (requires user filtering in backend first) |
 | `VITE_USE_MOCK_KYC` | `true` | KYC status in localStorage | Real `/api/kyc/*` (requires backend implementation first) |
 | `VITE_USE_MOCK_PASSPORTS` | `true` | Passport records in localStorage | Real `/api/passports/*` (requires passports table in backend first) |
+
+---
+
+### Session 12 Addendum — Real Authentication Wired
+
+The seven backend gaps listed above are now closed for the citizen/mukhtar/officer login path.
+
+**Backend**
+- New `public.users` table created via `backend/migrations/001_create_users.sql` (UUID PK, unique email, bcrypt `password_hash`, role check constraint, `failed_login_attempts`, `is_locked`, `locked_at`). Same migration rewires `citizen_profiles`, `mukhtar_profiles`, and `gs_officer_profiles` FKs to reference `users(user_id) ON DELETE CASCADE`.
+- `backend/migrations/002_seed_users.sql` seeds 5 test users (all password `test123`, bcrypt saltRounds=10) plus matching profile rows. Idempotent via `ON CONFLICT DO NOTHING`.
+- `backend/src/auth/auth.service.ts` rewritten — bcrypt hash/compare, `JwtService`-signed tokens (`{ id, email, role }`), real DB lookups via `DatabaseService`. Enforces FR-05.1 server-side: 3 failed attempts → lock + 15-minute auto-unlock window.
+- `bcrypt` + `@types/bcrypt` installed in `backend/package.json`.
+- `auth.module.ts` now imports `DatabaseModule`.
+
+**Test user UUIDs** (all password `test123`)
+
+| Email | Role | UUID |
+|---|---|---|
+| `accepted@test.com` | citizen | `a1b2c3d4-0000-0000-0000-000000000001` |
+| `pending@test.com` | citizen | `a1b2c3d4-0000-0000-0000-000000000002` |
+| `rejected@test.com` | citizen | `a1b2c3d4-0000-0000-0000-000000000003` |
+| `mukhtar@test.com` | mukhtar | `a1b2c3d4-0000-0000-0000-000000000004` |
+| `officer@test.com` | officer | `a1b2c3d4-0000-0000-0000-000000000005` |
+
+**Frontend**
+- `frontend/src/services/authService.ts` — added real-API branches behind `USE_MOCK_AUTH` flag. Public methods `login`, `register`, `getCurrentUser`, `logout` route to `apiLogin/apiRegister/readApiSession/apiLogout` when flag is false; mock behaviour is preserved when true. Real flow writes JWT to `npis_token` and a `{ userId, email, role, fullName }` record to `npis_session`. `LoginResult` shape unchanged; lockout fields parsed from backend 401 body. `loginAuthorized` (mukhtar/officer page) remains on mock data — no component file changes.
+- `frontend/.env.development` — `VITE_USE_MOCK_AUTH=false`.
