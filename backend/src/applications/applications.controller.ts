@@ -1,5 +1,17 @@
-import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Put,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApplicationsService } from './applications.service';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
 
 @Controller('applications')
 export class ApplicationsController {
@@ -38,6 +50,13 @@ export class ApplicationsController {
   @Post(':id/approve')
   approveApplication(@Param('id') id: string, @Body() body: any) {
     return this.applicationsService.approveApplication(id, body);
+  }
+
+  @Post(':id/resubmit')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('citizen')
+  resubmitDocuments(@Param('id') id: string, @Body() body: any) {
+    return this.applicationsService.resubmitDocuments(id, body);
   }
 
   @Post(':id/cancel-old-passport')

@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ApplicationsService } from '../applications/applications.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -13,5 +13,11 @@ export class MukhtarController {
   @Roles('mukhtar')
   async getPendingApplications() {
     return this.applicationsService.findAll('mukhtar');
+  }
+
+  @Post('applications/:id/reject')
+  @Roles('mukhtar')
+  async requestResubmission(@Param('id') id: string, @Body() body: any) {
+    return this.applicationsService.requestResubmission(id, body);
   }
 }

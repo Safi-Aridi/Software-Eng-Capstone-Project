@@ -1,5 +1,6 @@
 // Handles FR-09 (fee transmission), FR-28/29/30 (payment callbacks)
 
+import { apiClient } from "./apiClient";
 import { notificationService } from "./notificationService";
 
 export type PaymentOutcome = "SUCCESS" | "FAILED" | "GATEWAY_UNAVAILABLE";
@@ -52,7 +53,7 @@ const updateAppPaymentStatus = (
 
 export const paymentService = {
   // FR-09 — Transmit fee to CashPlus gateway and simulate outcome
-  // TODO: POST /api/payments/initiate → transmit applicationId, amount, userId to CashPlus gateway
+  // TODO: POST /api/payments/initiate → transmit applicationId, amount, userId to CashPlus gateway (replace mock simulation)
   initiatePayment: async (
     applicationId: string,
     amount: number,
@@ -85,14 +86,28 @@ export const paymentService = {
 
     if (outcome === "SUCCESS") {
       // FR-28 — successful callback
+      const gatewayRef = `CASHPLUS-MOCK-${Math.floor(10000000 + Math.random() * 90000000)}`;
       const updated: PaymentRecord = {
         ...record,
         status: "Paid",
         resolvedAt: new Date().toISOString(),
-        gatewayRef: `CASHPLUS-MOCK-${Math.floor(10000000 + Math.random() * 90000000)}`,
+        gatewayRef,
       };
       localStorage.setItem(paymentKey(applicationId), JSON.stringify(updated));
       updateAppPaymentStatus(userId, applicationId, "Paid");
+
+      // Call backend callback endpoint to update payment status in database
+      try {
+        await apiClient.post("/payments/callback", {
+          applicationId,
+          status: "Paid",
+          userId,
+          transactionId: gatewayRef,
+        });
+      } catch (error) {
+        console.error("Failed to call backend payment callback:", error);
+        // Continue with localStorage update even if backend call fails
+      }
     } else if (outcome === "FAILED") {
       // FR-29 — failed callback: update status and notify citizen
       const updated: PaymentRecord = {
@@ -103,6 +118,20 @@ export const paymentService = {
       };
       localStorage.setItem(paymentKey(applicationId), JSON.stringify(updated));
       updateAppPaymentStatus(userId, applicationId, "Failed");
+
+      // Call backend callback endpoint to update payment status in database
+      try {
+        await apiClient.post("/payments/callback", {
+          applicationId,
+          status: "Failed",
+          userId,
+          transactionId: null,
+        });
+      } catch (error) {
+        console.error("Failed to call backend payment callback:", error);
+        // Continue with localStorage update even if backend call fails
+      }
+
       notificationService.addNotification(userId, {
         type: "STATUS_UPDATE",
         message:
@@ -119,7 +148,10 @@ export const paymentService = {
   // TODO: GET /api/payments/:applicationId/status
   getPaymentStatus: async (
     applicationId: string,
-  ): Promise<{ status: "UNPAID" | "Paid" | "Failed"; initiatedAt?: string }> => {
+  ): Promise<{
+    status: "UNPAID" | "Paid" | "Failed";
+    initiatedAt?: string;
+  }> => {
     const record = getRecord(applicationId);
     if (!record) return { status: "UNPAID" };
     return {

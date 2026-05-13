@@ -167,12 +167,22 @@ export const mukhtarService = {
   },
 
   // FR-16, FR-22 — Request document resubmission with per-document reasons
-  // TODO: POST /api/mukhtar/applications/:id/reject
   rejectApplication: async (
-    _mukhtarId: string,
+    mukhtarId: string,
     applicationId: string,
     resubmissionReasons?: PassportApplication["resubmissionReasons"],
   ): Promise<{ success: boolean }> => {
+    if (!USE_MOCK) {
+      const resolvedMukhtarId = getSessionUserId() ?? mukhtarId;
+      return apiClient.post<{ success: boolean }>(
+        `/mukhtar/applications/${applicationId}/reject`,
+        {
+          mukhtarId: resolvedMukhtarId,
+          resubmissionReasons,
+        },
+      );
+    }
+
     const timestamp = new Date().toISOString();
     let citizenUserId: string | null = null;
     let trackingNumber = "";

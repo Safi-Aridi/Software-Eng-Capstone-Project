@@ -68,10 +68,10 @@ const NewPassportApplicationPage = () => {
   const typeLocked = presetType !== null;
 
   const [step, setStep] = useState(typeLocked ? 2 : 1);
-  const [applicationType, setApplicationType] = useState<ApplicationType | null>(
-    presetType,
-  );
-  const [passportValidity, setPassportValidity] = useState<ValidityYears | null>(null);
+  const [applicationType, setApplicationType] =
+    useState<ApplicationType | null>(presetType);
+  const [passportValidity, setPassportValidity] =
+    useState<ValidityYears | null>(null);
   const [documents, setDocuments] = useState<DocumentFiles>({
     identityDocument: null,
     passportPhoto: null,
@@ -112,11 +112,13 @@ const NewPassportApplicationPage = () => {
       if (!documents.passportPhoto)
         errs.passportPhoto = "Passport photo is required.";
       if (applicationType === "RENEWAL" && !documents.oldPassport)
-        errs.oldPassport = "Old passport scan is required for renewal applications.";
+        errs.oldPassport =
+          "Old passport scan is required for renewal applications.";
     }
     if (step === 4) {
       if (!mukhtarForm.address.trim()) errs.address = "Address is required.";
-      if (!mukhtarForm.district.trim()) errs.district = "District / Qada is required.";
+      if (!mukhtarForm.district.trim())
+        errs.district = "District / Qada is required.";
       if (!mukhtarForm.mukhtarName.trim())
         errs.mukhtarName = "Mukhtar's name is required.";
     }
@@ -212,10 +214,12 @@ const NewPassportApplicationPage = () => {
       renewingPassportId,
     };
 
-    // TODO: Replace with POST /api/applications when backend is ready
-    await applicationService.createApplication(currentUser.user.id, application);
+    const created = await applicationService.createApplication(
+      currentUser.user.id,
+      application,
+    );
     setIsSubmitting(false);
-    navigate(`/application/pay/${applicationId}`);
+    navigate(`/application/pay/${created.applicationId}`);
   };
 
   return (
@@ -232,7 +236,11 @@ const NewPassportApplicationPage = () => {
 
         <ProgressBar
           currentStep={applicationType === "RENEWAL" && step === 6 ? 5 : step}
-          labels={applicationType === "RENEWAL" ? STEP_LABELS_RENEWAL : STEP_LABELS_NEW}
+          labels={
+            applicationType === "RENEWAL"
+              ? STEP_LABELS_RENEWAL
+              : STEP_LABELS_NEW
+          }
         />
 
         <div className="bg-white rounded-lg shadow-md p-6 mt-6">
@@ -397,9 +405,10 @@ const Step1TypeSelection = ({
           key={type}
           onClick={() => onSelect(type)}
           className={`p-6 rounded-lg border-2 text-left transition-all
-            ${selected === type
-              ? "border-blue-600 bg-blue-50"
-              : "border-gray-200 hover:border-blue-300 hover:bg-gray-50"
+            ${
+              selected === type
+                ? "border-blue-600 bg-blue-50"
+                : "border-gray-200 hover:border-blue-300 hover:bg-gray-50"
             }`}
         >
           <div className="text-3xl mb-3">{type === "NEW" ? "🛂" : "🔄"}</div>
@@ -448,9 +457,10 @@ const Step2PassportDetails = ({
         <label
           key={years}
           className={`flex items-center p-4 rounded-lg border-2 cursor-pointer transition-all
-            ${validity === years
-              ? "border-blue-600 bg-blue-50"
-              : "border-gray-200 hover:border-blue-300"
+            ${
+              validity === years
+                ? "border-blue-600 bg-blue-50"
+                : "border-gray-200 hover:border-blue-300"
             }`}
         >
           <input
@@ -462,7 +472,9 @@ const Step2PassportDetails = ({
             className="mr-3 accent-blue-600"
           />
           <div>
-            <div className="font-medium text-gray-800">{years}-Year Passport</div>
+            <div className="font-medium text-gray-800">
+              {years}-Year Passport
+            </div>
             <div className="text-sm text-gray-500">
               Valid for {years} years from issue date
             </div>
@@ -668,6 +680,15 @@ const Step5BiometricCapture = ({
       />
     )}
 
+    {import.meta.env.DEV && !biometricCaptured && (
+      <button
+        onClick={onBiometricCapture}
+        className="mt-4 px-4 py-2 bg-amber-500 text-white rounded-md hover:bg-amber-600 transition-colors text-sm font-medium"
+      >
+        Skip (Dev Only)
+      </button>
+    )}
+
     <p className="text-gray-500 text-xs mt-4">
       Biometric data is encrypted and stored in compliance with ISO/IEC 19794-4
       and ISO/IEC 19794-5.
@@ -710,7 +731,9 @@ const Step6Review = ({
       <ReviewSection title="Application Type">
         <ReviewRow
           label="Type"
-          value={applicationType === "NEW" ? "New Passport" : "Passport Renewal"}
+          value={
+            applicationType === "NEW" ? "New Passport" : "Passport Renewal"
+          }
         />
       </ReviewSection>
 
@@ -753,13 +776,29 @@ const Step6Review = ({
     </div>
 
     <div className="mt-5 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-start gap-3">
-      <svg className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+      <svg
+        className="w-5 h-5 text-blue-600 shrink-0 mt-0.5"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
+        />
       </svg>
       <div>
-        <p className="text-blue-800 text-sm font-medium">Payment required after submission</p>
+        <p className="text-blue-800 text-sm font-medium">
+          Payment required after submission
+        </p>
         <p className="text-blue-700 text-sm mt-0.5">
-          You will be redirected to complete payment of <span className="font-semibold">{feeAmount.toLocaleString()} LBP</span> via CashPlus after submitting.
+          You will be redirected to complete payment of{" "}
+          <span className="font-semibold">
+            {feeAmount.toLocaleString()} LBP
+          </span>{" "}
+          via CashPlus after submitting.
         </p>
       </div>
     </div>
@@ -792,9 +831,7 @@ const Step6Review = ({
         }`}
       >
         I acknowledge that I am required to pay{" "}
-        <span className="font-semibold">
-          {feeAmount.toLocaleString()} LBP
-        </span>{" "}
+        <span className="font-semibold">{feeAmount.toLocaleString()} LBP</span>{" "}
         to complete this application. I understand that failure to complete
         payment within 15 minutes will result in the application being
         cancelled.

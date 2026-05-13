@@ -583,6 +583,13 @@ export const seedTestDataIfNeeded = (): void => {
     );
   }
 
+  // Skip seeding application/passport/signature mock data when the
+  // applications service is wired to the real backend — otherwise the
+  // dashboard would mix Supabase rows with stale localStorage entries.
+  if (import.meta.env.VITE_USE_MOCK_APPLICATIONS === "false") {
+    return;
+  }
+
   // Seed applications by ID — safe to call every load
   ensureApplicationsExist("a1b2c3d4-0000-0000-0000-000000000001", [
     ...APPS_USER_002,

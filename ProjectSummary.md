@@ -1192,3 +1192,158 @@ No change required this session.
 2. Add guards to the mutating `/applications/:id/*` routes.
 3. Stand up a `notifications` table and remove the frontend
    `notificationService.create()` placeholders.
+
+---
+
+## Session 14 — Citizen Application Creation Wired
+
+### Branch
+`feature/backend-integration` (continuing).
+
+### What Was Wired
+
+#### 1. `applicationService.createApplication` — real `POST /api/applications`
+The real-mode branch now sources `citizenId` from `npis_session.userId`
+(falling back to the `application.userId` argument for mock-mode
+compatibility). The POST body sends:
+```
+{
+  citizenId: <UUID from npis_session>,
+  applicationType: 'new_passport' | 'renewal',
+  validityId: 1 (5yr) | 2 (10yr),
+  serviceTypeId: 1
+}
+```
+The backend returns the full inserted row in
+`{ application: <row> }`; the service runs it through
+`mapApiApplicationToFrontend` and returns the mapped object.
+
+The mapper already extracts `applicationId` from the backend's
+`application_id` column via `snakeToCamel`, so the returned object's
+`applicationId` is the Postgres-assigned UUID.
+
+#### 2. Backend tracking-number format
+`applications.service.create` previously generated
+`TRK-${Date.now()}`. Now uses:
+```
+NPIS-${new Date().getFullYear()}-${6 random digits}
+```
+matching the format the frontend dashboard renders.
+
+#### 3. `getApplicationById` — already wired
+Verified during this session: real-mode path issues
+`GET /api/applications/:id` and runs the response through
+`mapApiApplicationToFrontend`. No code change needed.
+
+#### 4. `seedTestData.ts` — application/passport seeding now gated
+A guard was added: when `VITE_USE_MOCK_APPLICATIONS === 'false'`,
+`seedTestDataIfNeeded` returns before seeding `applications_*`,
+`passports_*`, and `mukhtar_signature_*` keys. Users + authorized users
+seeding remain unconditional because they belong to the auth-mock flag.
+
+### ⚠️ Known Issue (Component Change Required)
+
+`NewPassportApplicationPage.tsx` generates its own
+`applicationId = 'app_' + Date.now()` and navigates to
+`/application/pay/${applicationId}` regardless of the value returned by
+`createApplication`. In real mode the authoritative `applicationId` is
+the Postgres UUID returned by the backend; the payment page will fail
+to resolve the local fake id via `getApplicationById`.
+
+**Fix (out of scope this session — requires editing the .tsx):**
+```ts
+const created = await applicationService.createApplication(
+  currentUser.user.id, application,
+);
+navigate(`/application/pay/${created.applicationId}`);
+```
+The same fix should also drop the locally generated `trackingNumber` —
+the backend now provides one. Flagged here as Session 14 follow-up.
+
+### Still Needs Wiring
+- **Payment** — `paymentService` and the payment page are still mock
+  (`VITE_USE_MOCK_PAYMENTS=true`). CashPlus initiate/callback endpoints
+  are stubs.
+- **Documents** — files are stored as base64 in localStorage; backend
+  has no Supabase Storage integration. Document rows on the backend
+  exist for the three seed applications only.
+- **Biometrics** — captured in-browser only; no `biometric_data` table
+  writes from the create flow.
+- **KYC** — still mock per `VITE_USE_MOCK_KYC=true`; account-status
+  gating on the new-application form uses local KYC state.
+- **NewPassportApplicationPage redirect** — see Known Issue above.
+
+### Verified
+- Backend `tsc --noEmit` clean.
+- Frontend `tsc --noEmit` clean.
+- No `.tsx` files modified.
+
+---
+
+## Session 15 - Backend-Backed Resubmission Flow
+
+### Branch
+`feature/backend-integration` (continuing).
+
+### What Was Wired
+
+#### 1. `resubmission_requests` migration
+Added `backend/migrations/002_resubmission_requests.sql`.
+
+Table purpose:
+- Uses the existing table shape: one row per rejected document.
+- Stores Mukhtar rejection feedback in `reason` text.
+- Tracks whether each request has been resolved via `resolved` and `resolved_at`.
+
+#### 2. Mukhtar resubmission endpoint
+Added guarded endpoint:
+```
+POST /api/mukhtar/applications/:id/reject
+```
+
+Behavior:
+1. Inserts one row into `resubmission_requests` per rejected document.
+2. Updates `applications.current_status` to `Resubmission Required`.
+3. Inserts into `application_status_history`.
+4. Writes an audit log entry with action `APPLICATION_RESUBMISSION_REQUESTED`.
+
+Frontend `mukhtarService.requestResubmission()` now calls this endpoint when
+`VITE_USE_MOCK_MUKHTAR=false`.
+
+#### 3. Citizen document resubmission endpoint
+Added guarded citizen endpoint:
+```
+POST /api/applications/:id/resubmit
+```
+
+Behavior:
+1. Updates `applications.current_status` back to `Pending`.
+2. Marks unresolved `resubmission_requests` rows for the application as
+   `resolved = true`.
+3. Sets `resolved_at = now()`.
+4. Inserts into `application_status_history`.
+5. Writes an audit log entry with action `APPLICATION_DOCUMENTS_RESUBMITTED`.
+
+Frontend `applicationService.updateApplicationDocuments()` now calls this
+endpoint when `VITE_USE_MOCK_APPLICATIONS=false`.
+
+#### 4. Rejection reasons now hydrate into frontend applications
+`ApplicationsService.findAll()` and `findOne()` now aggregate unresolved
+`resubmission_requests.reason` rows through `documents.document_type` and return
+the result as `resubmission_reasons`.
+
+`mapApiApplicationToFrontend()` maps it to:
+```
+app.resubmissionReasons
+```
+only while the application status is `RESUBMISSION_REQUIRED`.
+
+### Verified
+- Backend app compile: `tsc -p tsconfig.build.json --noEmit` clean.
+- Frontend compile: `tsc --noEmit` clean.
+
+### Notes
+- The existing `resubmission_requests` table is reused; migration
+  `002_resubmission_requests.sql` now documents that schema and adds indexes.
+- Document upload is still filename-only/base64 at the UI layer; no real
+  Supabase Storage integration yet.

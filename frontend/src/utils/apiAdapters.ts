@@ -72,17 +72,50 @@ export const backendAppTypeToFrontend = (s: string): "NEW" | "RENEWAL" =>
 export const frontendAppTypeToBackend = (s: string): string =>
   s === "RENEWAL" ? "renewal" : "new_passport";
 
+const parseResubmissionReasons = (
+  value: unknown,
+  currentStatus: string,
+): PassportApplication["resubmissionReasons"] => {
+  if (currentStatus !== "RESUBMISSION_REQUIRED") return undefined;
+
+  const parsed =
+    typeof value === "string"
+      ? (() => {
+          try {
+            return JSON.parse(value) as unknown;
+          } catch {
+            return null;
+          }
+        })()
+      : value;
+
+  if (!parsed || typeof parsed !== "object") return undefined;
+  const input = parsed as Record<string, unknown>;
+
+  return {
+    identityDocument:
+      typeof input.identityDocument === "string"
+        ? input.identityDocument
+        : undefined,
+    passportPhoto:
+      typeof input.passportPhoto === "string" ? input.passportPhoto : undefined,
+    oldPassport:
+      typeof input.oldPassport === "string" ? input.oldPassport : undefined,
+  };
+};
+
 // ─── Full application mapper ──────────────────────────────────────────────────
 
 export const mapApiApplicationToFrontend = (raw: unknown): PassportApplication => {
   const c = snakeToCamel(raw) as Record<string, unknown>;
+  const currentStatus = backendStatusToFrontend(
+    (c.currentStatus as string) ?? "Pending",
+  ) as PassportApplication["currentStatus"];
   return {
     applicationId: (c.applicationId as string) ?? "",
     userId: (c.citizenId as string) ?? "",
     applicationType: backendAppTypeToFrontend((c.applicationType as string) ?? ""),
-    currentStatus: backendStatusToFrontend(
-      (c.currentStatus as string) ?? "Pending",
-    ) as PassportApplication["currentStatus"],
+    currentStatus,
     submissionDate: (c.createdAt as string) ?? new Date().toISOString(),
     trackingNumber: (c.trackingNumber as string) ?? "",
     passportValidity: 5,
@@ -91,7 +124,10 @@ export const mapApiApplicationToFrontend = (raw: unknown): PassportApplication =
       (c.paymentStatus as string) ?? "Pending",
     ) as PassportApplication["paymentStatus"],
     renewingPassportId: null,
-    resubmissionReasons: null,
+    resubmissionReasons: parseResubmissionReasons(
+      c.resubmissionReasons,
+      currentStatus,
+    ),
     documents: {
       identityDocument: null,
       passportPhoto: null,

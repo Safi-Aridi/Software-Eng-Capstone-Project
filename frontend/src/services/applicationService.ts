@@ -85,6 +85,17 @@ export const getIdentityForUser = (userId: string): CitizenIdentity | null => {
 
 const applicationsKey = (userId: string) => `applications_${userId}`;
 
+const getSessionUserId = (): string | null => {
+  try {
+    const raw = localStorage.getItem("npis_session");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { userId?: string };
+    return parsed.userId ?? null;
+  } catch {
+    return null;
+  }
+};
+
 // Internal sync helper — used within this module only
 const readApplications = (userId: string): PassportApplication[] => {
   const stored = localStorage.getItem(applicationsKey(userId));
@@ -138,12 +149,26 @@ export const applicationService = {
       localStorage.setItem(applicationsKey(userId), JSON.stringify(existing));
       return application;
     }
+    // In real-auth mode the authoritative citizenId is the userId stored in
+    // npis_session, not whatever the component passes in. Fall back to the
+    // passed-in userId so the function still works in mock mode.
+    let citizenId = application.userId;
+    try {
+      const raw = localStorage.getItem("npis_session");
+      if (raw) {
+        const parsed = JSON.parse(raw) as { userId?: string };
+        if (parsed.userId) citizenId = parsed.userId;
+      }
+    } catch {
+      // ignore — keep fallback
+    }
     const response = await apiClient.post<{ application: unknown }>(
       "/applications",
       {
-        citizenId: application.userId,
+        citizenId,
         applicationType: frontendAppTypeToBackend(application.applicationType),
         validityId: application.passportValidity === 10 ? 2 : 1,
+        serviceTypeId: 1,
       },
     );
     return mapApiApplicationToFrontend(response.application);
@@ -181,12 +206,19 @@ export const applicationService = {
   },
 
   // FR-22 — Document resubmission; also resets status to PENDING_REVIEW
-  // TODO: PUT /api/applications/:id/documents when backend is ready
   updateApplicationDocuments: async (
     userId: string,
     applicationId: string,
     documents: PassportApplication["documents"],
   ): Promise<void> => {
+    if (!USE_MOCK) {
+      await apiClient.post(`/applications/${applicationId}/resubmit`, {
+        citizenId: getSessionUserId() ?? userId,
+        documents,
+      });
+      return;
+    }
+
     const apps = readApplications(userId);
     const idx = apps.findIndex((a) => a.applicationId === applicationId);
     if (idx >= 0) {

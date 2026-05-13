@@ -2,6 +2,18 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
 
+type ResubmissionReasons = Partial<{
+  identityDocument: string;
+  passportPhoto: string;
+  oldPassport: string;
+}>;
+
+const DOCUMENT_TYPE_BY_REASON_KEY: Record<keyof ResubmissionReasons, string> = {
+  identityDocument: 'identity_document',
+  passportPhoto: 'passport_photo',
+  oldPassport: 'old_passport',
+};
+
 @Injectable()
 export class ApplicationsService {
   constructor(
@@ -9,17 +21,93 @@ export class ApplicationsService {
     private readonly auditService: AuditService,
   ) {}
 
+  private readonly applicationSelect = `
+    SELECT
+      a.*,
+      rr.resubmission_reasons
+    FROM applications a
+    LEFT JOIN LATERAL (
+      SELECT jsonb_object_agg(
+        CASE d.document_type
+          WHEN 'identity_document' THEN 'identityDocument'
+          WHEN 'passport_photo' THEN 'passportPhoto'
+          WHEN 'old_passport' THEN 'oldPassport'
+          ELSE d.document_type
+        END,
+        r.reason
+      ) FILTER (WHERE d.document_type IS NOT NULL) AS resubmission_reasons
+      FROM resubmission_requests r
+      LEFT JOIN documents d ON d.document_id = r.document_id
+      WHERE r.application_id = a.application_id
+        AND COALESCE(r.resolved, false) = false
+    ) rr ON true
+  `;
+
+  private sanitizeReasons(reasons: unknown): ResubmissionReasons {
+    if (!reasons || typeof reasons !== 'object') return {};
+    const input = reasons as Record<string, unknown>;
+    const out: ResubmissionReasons = {};
+
+    if (typeof input.identityDocument === 'string') {
+      out.identityDocument = input.identityDocument.trim();
+    }
+    if (typeof input.passportPhoto === 'string') {
+      out.passportPhoto = input.passportPhoto.trim();
+    }
+    if (typeof input.oldPassport === 'string') {
+      out.oldPassport = input.oldPassport.trim();
+    }
+
+    return Object.fromEntries(
+      Object.entries(out).filter(
+        ([, value]) => typeof value === 'string' && value.length > 0,
+      ),
+    ) as ResubmissionReasons;
+  }
+
+  private async getOrCreateDocumentId(
+    applicationId: string,
+    documentType: string,
+  ): Promise<string> {
+    const existing = await this.databaseService.query(
+      `SELECT document_id
+       FROM documents
+       WHERE application_id = $1
+         AND document_type = $2
+       ORDER BY document_id
+       LIMIT 1`,
+      [applicationId, documentType],
+    );
+
+    if (existing.rowCount && existing.rows[0].document_id) {
+      return existing.rows[0].document_id as string;
+    }
+
+    const created = await this.databaseService.query(
+      `INSERT INTO documents (application_id, document_type, file_url)
+       VALUES ($1, $2, $3)
+       RETURNING document_id`,
+      [
+        applicationId,
+        documentType,
+        `pending-resubmission://${applicationId}/${documentType}`,
+      ],
+    );
+
+    return created.rows[0].document_id as string;
+  }
+
   async findAll(role?: string) {
-    let query = 'SELECT * FROM applications';
+    let query = this.applicationSelect;
     const params: string[] = [];
 
     if (role === 'mukhtar') {
-      query += " WHERE current_status = 'Verified'";
+      query += " WHERE a.current_status = 'Verified'";
     } else if (role === 'officer') {
-      query += " WHERE current_status = 'Mukhtar Signed'";
+      query += " WHERE a.current_status = 'Mukhtar Signed'";
     }
 
-    query += ' ORDER BY created_at DESC';
+    query += ' ORDER BY a.created_at DESC';
 
     const result = await this.databaseService.query(query, params);
     return result.rows;
@@ -27,9 +115,8 @@ export class ApplicationsService {
 
   async findOne(id: string) {
     const query = `
-      SELECT *
-      FROM applications
-      WHERE application_id = $1
+      ${this.applicationSelect}
+      WHERE a.application_id = $1
       LIMIT 1
     `;
 
@@ -68,7 +155,9 @@ export class ApplicationsService {
       RETURNING *
     `;
 
-    const trackingNumber = `TRK-${Date.now()}`;
+    const trackingNumber = `NPIS-${new Date().getFullYear()}-${Math.floor(
+      100000 + Math.random() * 900000,
+    )}`;
 
     const result = await this.databaseService.query(query, [
       body.citizenId,
@@ -137,6 +226,129 @@ export class ApplicationsService {
       message: 'Application updated successfully',
       applicationId: id,
       application: result.rows[0],
+    };
+  }
+
+  async requestResubmission(id: string, body: any) {
+    const prior = await this.databaseService.query(
+      'SELECT current_status FROM applications WHERE application_id = $1',
+      [id],
+    );
+    if (prior.rowCount === 0) {
+      throw new NotFoundException(`Application with ID ${id} not found`);
+    }
+
+    const oldStatus = prior.rows[0].current_status as string | null;
+    const reasons = this.sanitizeReasons(body.resubmissionReasons);
+
+    await this.databaseService.query(
+      `UPDATE resubmission_requests
+       SET resolved = true,
+           resolved_at = now()
+       WHERE application_id = $1
+         AND COALESCE(resolved, false) = false`,
+      [id],
+    );
+
+    for (const [reasonKey, reason] of Object.entries(reasons) as [
+      keyof ResubmissionReasons,
+      string,
+    ][]) {
+      const documentType = DOCUMENT_TYPE_BY_REASON_KEY[reasonKey];
+      const documentId = await this.getOrCreateDocumentId(id, documentType);
+
+      await this.databaseService.query(
+        `INSERT INTO resubmission_requests
+           (application_id, document_id, reason, resolved, requested_at)
+         VALUES ($1, $2, $3, false, now())`,
+        [id, documentId, reason],
+      );
+    }
+
+    await this.databaseService.query(
+      `UPDATE applications
+       SET current_status = $1
+       WHERE application_id = $2`,
+      ['Resubmission Required', id],
+    );
+
+    await this.databaseService.query(
+      `INSERT INTO application_status_history
+         (application_id, old_status, new_status, change_reason)
+       VALUES ($1, $2, $3, $4)`,
+      [
+        id,
+        oldStatus,
+        'Resubmission Required',
+        'Mukhtar requested document resubmission',
+      ],
+    );
+
+    if (body.mukhtarId) {
+      await this.auditService.createLog({
+        userId: body.mukhtarId,
+        action: 'APPLICATION_RESUBMISSION_REQUESTED',
+        entityType: 'application',
+        entityId: id,
+      });
+    }
+
+    return {
+      success: true,
+      message: 'Resubmission requested successfully',
+      applicationId: id,
+      application: await this.findOne(id),
+    };
+  }
+
+  async resubmitDocuments(id: string, body: any) {
+    const prior = await this.databaseService.query(
+      'SELECT current_status FROM applications WHERE application_id = $1',
+      [id],
+    );
+    if (prior.rowCount === 0) {
+      throw new NotFoundException(`Application with ID ${id} not found`);
+    }
+
+    const oldStatus = prior.rows[0].current_status as string | null;
+
+    await this.databaseService.query(
+      `UPDATE applications
+       SET current_status = $1
+       WHERE application_id = $2`,
+      ['Pending', id],
+    );
+
+    await this.databaseService.query(
+      `UPDATE resubmission_requests
+       SET resolved = true,
+           resolved_at = now()
+       WHERE application_id = $1
+         AND COALESCE(resolved, false) = false`,
+      [id],
+    );
+
+    await this.databaseService.query(
+      `INSERT INTO application_status_history
+         (application_id, old_status, new_status, change_reason)
+       VALUES ($1, $2, $3, $4)`,
+      [id, oldStatus, 'Pending', 'Citizen resubmitted requested documents'],
+    );
+
+    if (body.citizenId) {
+      await this.auditService.createLog({
+        userId: body.citizenId,
+        action: 'APPLICATION_DOCUMENTS_RESUBMITTED',
+        entityType: 'application',
+        entityId: id,
+      });
+    }
+
+    return {
+      success: true,
+      message: 'Documents resubmitted successfully',
+      applicationId: id,
+      application: await this.findOne(id),
     };
   }
 
