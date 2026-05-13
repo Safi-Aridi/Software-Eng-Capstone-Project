@@ -141,21 +141,29 @@ export class ApplicationsService {
   }
 
   async signApplication(id: string, body: any) {
-    const query = `
-      UPDATE applications
-      SET current_status = $1
-      WHERE application_id = $2
-      RETURNING *
-    `;
-
-    const result = await this.databaseService.query(query, [
-      'Mukhtar Signed',
-      id,
-    ]);
-
-    if (result.rowCount === 0) {
+    const prior = await this.databaseService.query(
+      'SELECT current_status FROM applications WHERE application_id = $1',
+      [id],
+    );
+    if (prior.rowCount === 0) {
       throw new NotFoundException(`Application with ID ${id} not found`);
     }
+    const oldStatus = prior.rows[0].current_status as string | null;
+
+    const result = await this.databaseService.query(
+      `UPDATE applications
+       SET current_status = $1
+       WHERE application_id = $2
+       RETURNING *`,
+      ['Mukhtar Signed', id],
+    );
+
+    await this.databaseService.query(
+      `INSERT INTO application_status_history
+         (application_id, old_status, new_status, change_reason)
+       VALUES ($1, $2, $3, $4)`,
+      [id, oldStatus, 'Mukhtar Signed', 'Mukhtar electronic signature applied'],
+    );
 
     await this.auditService.createLog({
       userId: body.mukhtarId,
@@ -174,21 +182,29 @@ export class ApplicationsService {
   }
 
   async approveApplication(id: string, body: any) {
-    const query = `
-      UPDATE applications
-      SET current_status = $1
-      WHERE application_id = $2
-      RETURNING *
-    `;
-
-    const result = await this.databaseService.query(query, [
-      'Processed for Issuance',
-      id,
-    ]);
-
-    if (result.rowCount === 0) {
+    const prior = await this.databaseService.query(
+      'SELECT current_status FROM applications WHERE application_id = $1',
+      [id],
+    );
+    if (prior.rowCount === 0) {
       throw new NotFoundException(`Application with ID ${id} not found`);
     }
+    const oldStatus = prior.rows[0].current_status as string | null;
+
+    const result = await this.databaseService.query(
+      `UPDATE applications
+       SET current_status = $1
+       WHERE application_id = $2
+       RETURNING *`,
+      ['Processed for Issuance', id],
+    );
+
+    await this.databaseService.query(
+      `INSERT INTO application_status_history
+         (application_id, old_status, new_status, change_reason)
+       VALUES ($1, $2, $3, $4)`,
+      [id, oldStatus, 'Processed for Issuance', 'GS Officer final approval'],
+    );
 
     await this.auditService.createLog({
       userId: body.officerId,

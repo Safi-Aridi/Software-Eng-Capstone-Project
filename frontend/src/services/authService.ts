@@ -511,6 +511,34 @@ export const authService = {
       throw new Error("Authorized ID/email and password are required");
     }
 
+    if (!USE_MOCK_AUTH) {
+      // AuthorizedLoginPage calls this synchronously (no await), so we use a
+      // blocking XMLHttpRequest to preserve the existing return shape.
+      // Once that page is migrated to await an async call, swap this for fetch.
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${API_BASE_URL}/auth/login`, false);
+      xhr.setRequestHeader("Content-Type", "application/json");
+      try {
+        xhr.send(JSON.stringify({ email: identifier, password }));
+      } catch {
+        throw new Error("Unable to reach authentication server");
+      }
+      const body = (() => {
+        try {
+          return JSON.parse(xhr.responseText || "{}");
+        } catch {
+          return {};
+        }
+      })() as ApiLoginSuccess | ApiLoginError;
+      if (xhr.status < 200 || xhr.status >= 300) {
+        throw new Error(
+          (body as ApiLoginError).message || "Invalid credentials",
+        );
+      }
+      const ok = body as ApiLoginSuccess;
+      return persistApiSession(ok.token, ok.user);
+    }
+
     const users = getAuthorizedUsers();
     const found = users.find(
       (u) => u.email === identifier && u.password === password,

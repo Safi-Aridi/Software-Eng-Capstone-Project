@@ -9,6 +9,18 @@ import { mapApiApplicationToFrontend } from "../utils/apiAdapters";
 
 const USE_MOCK = import.meta.env.VITE_USE_MOCK_OFFICER === "true";
 
+// In real-auth mode the authoritative userId lives in npis_session.
+const getSessionUserId = (): string | null => {
+  try {
+    const raw = localStorage.getItem("npis_session");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { userId?: string };
+    return parsed.userId ?? null;
+  } catch {
+    return null;
+  }
+};
+
 const scanApplicationsByStatus = (
   status: string,
 ): PassportApplication[] => {
@@ -128,8 +140,9 @@ export const officerService = {
       return { success: true };
     }
 
+    const resolvedOfficerId = getSessionUserId() ?? _officerId;
     await apiClient.post(`/applications/${applicationId}/approve`, {
-      officerId: _officerId,
+      officerId: resolvedOfficerId,
     });
     // TODO: Remove when backend is connected — NestJS handles notification creation server-side
     notificationService.create("", {

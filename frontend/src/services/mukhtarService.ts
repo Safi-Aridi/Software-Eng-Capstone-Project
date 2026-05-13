@@ -8,6 +8,20 @@ import { mapApiApplicationToFrontend } from "../utils/apiAdapters";
 
 const USE_MOCK = import.meta.env.VITE_USE_MOCK_MUKHTAR === "true";
 
+// In real-auth mode the authoritative userId lives in npis_session. The
+// component still passes a value, but we override it so the backend always
+// sees the JWT-aligned UUID.
+const getSessionUserId = (): string | null => {
+  try {
+    const raw = localStorage.getItem("npis_session");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { userId?: string };
+    return parsed.userId ?? null;
+  } catch {
+    return null;
+  }
+};
+
 export interface MukhtarQueueItem {
   applicationId: string;
   citizenName: string;
@@ -138,7 +152,10 @@ export const mukhtarService = {
       return;
     }
 
-    await apiClient.post(`/applications/${applicationId}/sign`, { mukhtarId });
+    const resolvedMukhtarId = getSessionUserId() ?? mukhtarId;
+    await apiClient.post(`/applications/${applicationId}/sign`, {
+      mukhtarId: resolvedMukhtarId,
+    });
     // TODO: Remove when backend is connected — NestJS handles notification creation server-side
     notificationService.create("", {
       userId: "",

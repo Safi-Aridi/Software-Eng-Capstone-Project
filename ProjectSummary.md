@@ -1095,3 +1095,100 @@ the full citizen signup flow.
 - Mukhtar/officer login page (loginAuthorized() still mock)
 - Document upload (base64 in localStorage, no Supabase Storage)
 - Application creation from form (needs citizenId from real session)
+
+---
+
+## Session 13 — Mukhtar & Officer Login + Dashboard Wiring
+
+### Branch
+`feature/backend-integration` (continuing from Session 12).
+
+### What Was Wired
+
+#### 1. `authService.loginAuthorized` → real `POST /api/auth/login`
+The mukhtar/officer login page (`AuthorizedLoginPage.tsx`) calls
+`authService.loginAuthorized(identifier, password)` **synchronously** —
+without `await` — and immediately reads `user.role` to navigate. To avoid
+touching that component, the service was kept synchronous and now uses a
+blocking `XMLHttpRequest` for the real-mode network call. The function
+still returns `MockUser` and still `throw`s on failure.
+
+On success it writes:
+- `localStorage['npis_token']` = JWT
+- `localStorage['npis_session']` = `{ userId, email, role, fullName, isAuthenticated: true }`
+
+Mock behaviour is preserved under `VITE_USE_MOCK_AUTH=true`. The sync-XHR
+shim is the only known synchronous-IO call in the codebase and is
+deliberately scoped to this one entry point until the login page is
+migrated to `await` an async API.
+
+#### 2. `mukhtarId` / `officerId` resolved from real session
+`MukhtarDashboard.tsx` and `OfficerDashboard.tsx` pass
+`currentUser.user.id` into the service calls. In real-auth mode
+`getCurrentUser()` reads `npis_session`, so `user.id` is already the
+JWT-aligned UUID — but to make the services defensive against future
+caller bugs, both `mukhtarService.signApplication` and
+`officerService.approveApplication` now also read `userId` directly
+from `npis_session` and use that value in the POST body. The passed
+parameter is the fallback. No component changes needed.
+
+#### 3. Backend `application_status_history` writes added
+`applications.service.signApplication` and `approveApplication` now:
+1. `SELECT current_status` for the application (404 if missing).
+2. `UPDATE applications SET current_status = ...`.
+3. `INSERT INTO application_status_history (application_id, old_status,
+   new_status, change_reason)`.
+4. Continue to write an `audit_log` entry as before.
+
+Change reasons: `'Mukhtar electronic signature applied'` and
+`'GS Officer final approval'`.
+
+### Backend Guard Audit
+| Route | JwtAuthGuard | RolesGuard | Roles |
+|---|---|---|---|
+| `GET /api/mukhtar/pending`  | ✅ | ✅ | `'mukhtar'` |
+| `GET /api/officer/pending`  | ✅ | ✅ | `'officer'` |
+| `POST /api/applications/:id/sign`     | ❌ | ❌ | — |
+| `POST /api/applications/:id/approve`  | ❌ | ❌ | — |
+
+The mukhtar/officer pending routes already had both guards. `RolesGuard`
+reads `request.user.role` populated by `JwtAuthGuard.verify()`, and the
+JWT payload carries the *mapped* frontend role (`mapRoleToFrontend` in
+`auth.service.ts` translates `gs_officer → officer` before signing).
+Therefore `@Roles('mukhtar')` and `@Roles('officer')` are the correct
+guards.
+
+⚠️ The mutating routes on `ApplicationsController` (`/sign`, `/approve`,
+plus CRUD) are **not** guarded yet. Recommended follow-up: add
+`@UseGuards(JwtAuthGuard, RolesGuard)` + appropriate `@Roles(...)` per
+route.
+
+### Environment Flags
+`frontend/.env.development` already had:
+```
+VITE_USE_MOCK_MUKHTAR=false
+VITE_USE_MOCK_OFFICER=false
+```
+No change required this session.
+
+### What Stays Mocked
+- `mukhtarService.requestResubmission()` — backend endpoint
+  `POST /api/mukhtar/applications/:id/reject` not implemented.
+- `officerService.issueApplication()` and `cancelOldPassport()` — no
+  ISSUED/cancellation endpoints in the backend yet.
+- `notificationService.create()` calls inside both services (real flow
+  still emits a frontend-only notification with a TODO marker so the
+  citizen dashboard reflects the status change before notifications are
+  table-backed).
+
+### Verified
+- Backend `tsc --noEmit` clean.
+- Frontend `tsc --noEmit` clean.
+- No `.tsx` component files modified.
+
+### Open Questions for Session 14
+1. Migrate `AuthorizedLoginPage.tsx` to `await` an async
+   `loginAuthorized` and remove the sync-XHR shim.
+2. Add guards to the mutating `/applications/:id/*` routes.
+3. Stand up a `notifications` table and remove the frontend
+   `notificationService.create()` placeholders.
