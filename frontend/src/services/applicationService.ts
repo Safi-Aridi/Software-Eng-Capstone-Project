@@ -169,6 +169,12 @@ export const applicationService = {
         applicationType: frontendAppTypeToBackend(application.applicationType),
         validityId: application.passportValidity === 10 ? 2 : 1,
         serviceTypeId: 1,
+        mukhtarFormData: {
+          address: application.mukhtarFormData?.address ?? "",
+          district: application.mukhtarFormData?.district ?? "",
+          mukhtarName: application.mukhtarFormData?.mukhtarName ?? "",
+        },
+        biometricCaptured: application.biometricCaptured ?? false,
       },
     );
     return mapApiApplicationToFrontend(response.application);

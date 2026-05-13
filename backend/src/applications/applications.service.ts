@@ -24,7 +24,11 @@ export class ApplicationsService {
   private readonly applicationSelect = `
     SELECT
       a.*,
-      rr.resubmission_reasons
+      rr.resubmission_reasons,
+      mf.form_data AS mukhtar_form_data,
+      mf.signed AS mukhtar_signed,
+      mf.signed_at AS mukhtar_signed_at,
+      mf.electronic_signature AS mukhtar_electronic_signature
     FROM applications a
     LEFT JOIN LATERAL (
       SELECT jsonb_object_agg(
@@ -41,6 +45,7 @@ export class ApplicationsService {
       WHERE r.application_id = a.application_id
         AND COALESCE(r.resolved, false) = false
     ) rr ON true
+    LEFT JOIN mukhtar_forms mf ON mf.application_id = a.application_id
   `;
 
   private sanitizeReasons(reasons: unknown): ResubmissionReasons {
@@ -170,10 +175,47 @@ export class ApplicationsService {
       trackingNumber,
     ]);
 
+    const created = result.rows[0];
+    const newApplicationId = created.application_id as string;
+
+    // Persist the mukhtar form payload alongside the application. Non-fatal —
+    // a failure here must not roll back the application insert.
+    try {
+      await this.databaseService.query(
+        `INSERT INTO mukhtar_forms (application_id, form_data)
+         VALUES ($1, $2)`,
+        [
+          newApplicationId,
+          JSON.stringify(body.mukhtarFormData ?? {}),
+        ],
+      );
+    } catch (err) {
+      console.error(
+        `[applications.create] mukhtar_forms insert failed for ${newApplicationId}:`,
+        err,
+      );
+    }
+
+    // Record biometric capture intent so the ML pipeline can pick it up.
+    if (body.biometricCaptured === true) {
+      try {
+        await this.databaseService.query(
+          `INSERT INTO biometric_data (application_id, verification_status)
+           VALUES ($1, 'Pending')`,
+          [newApplicationId],
+        );
+      } catch (err) {
+        console.error(
+          `[applications.create] biometric_data insert failed for ${newApplicationId}:`,
+          err,
+        );
+      }
+    }
+
     return {
       success: true,
       message: 'Application created successfully',
-      application: result.rows[0],
+      application: created,
     };
   }
 
@@ -376,6 +418,27 @@ export class ApplicationsService {
        VALUES ($1, $2, $3, $4)`,
       [id, oldStatus, 'Mukhtar Signed', 'Mukhtar electronic signature applied'],
     );
+
+    // Mark the matching mukhtar_forms row as signed with a generated
+    // signature token. Non-fatal — the sign action proceeds even if the
+    // form row is missing for any reason.
+    try {
+      const electronicSignature = `SIG-${body.mukhtarId ?? 'unknown'}-${Date.now()}`;
+      await this.databaseService.query(
+        `UPDATE mukhtar_forms
+         SET signed = true,
+             signed_by = $1,
+             signed_at = NOW(),
+             electronic_signature = $2
+         WHERE application_id = $3`,
+        [body.mukhtarId ?? null, electronicSignature, id],
+      );
+    } catch (err) {
+      console.error(
+        `[applications.signApplication] mukhtar_forms update failed for ${id}:`,
+        err,
+      );
+    }
 
     await this.auditService.createLog({
       userId: body.mukhtarId,

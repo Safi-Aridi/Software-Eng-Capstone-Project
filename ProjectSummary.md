@@ -1347,3 +1347,136 @@ only while the application status is `RESUBMISSION_REQUIRED`.
   `002_resubmission_requests.sql` now documents that schema and adds indexes.
 - Document upload is still filename-only/base64 at the UI layer; no real
   Supabase Storage integration yet.
+
+---
+
+## Session 16 — Security Hardening
+
+### Branch
+`feature/backend-integration` (continuing).
+
+### Route Guards Audit & Fixes
+
+#### `ApplicationsController` — all routes now guarded
+| Route | Guards | Roles |
+|---|---|---|
+| `GET    /api/applications`                          | `JwtAuthGuard`              | (any authenticated) |
+| `GET    /api/applications/:id`                      | `JwtAuthGuard`              | (any authenticated) |
+| `GET    /api/applications/:id/status`               | `JwtAuthGuard`              | (any authenticated) |
+| `POST   /api/applications`                          | `JwtAuthGuard`              | (any authenticated) |
+| `PUT    /api/applications/:id`                      | `JwtAuthGuard`, `RolesGuard`| `citizen`, `mukhtar`, `officer` |
+| `POST   /api/applications/:id/sign`                 | `JwtAuthGuard`, `RolesGuard`| `mukhtar` |
+| `POST   /api/applications/:id/approve`              | `JwtAuthGuard`, `RolesGuard`| `officer` |
+| `POST   /api/applications/:id/resubmit`             | `JwtAuthGuard`, `RolesGuard`| `citizen` |
+| `POST   /api/applications/:id/cancel-old-passport`  | `JwtAuthGuard`, `RolesGuard`| `officer` |
+
+#### `MukhtarController` — confirmed already guarded
+Controller-level `@UseGuards(JwtAuthGuard, RolesGuard)` covers both
+`GET /api/mukhtar/pending` and `POST /api/mukhtar/applications/:id/reject`;
+both methods carry `@Roles('mukhtar')`.
+
+#### `OfficerController` — already guarded
+Controller-level guards + `@Roles('officer')` on `GET /api/officer/pending`.
+
+#### `PaymentsController`
+| Route | Guards | Notes |
+|---|---|---|
+| `POST /api/payments/initiate`               | `JwtAuthGuard`, `RolesGuard` (`citizen`) | citizen-only |
+| `GET  /api/payments/:applicationId/status`  | `JwtAuthGuard`                            | any authenticated |
+| `POST /api/payments/callback`               | **unguarded** | CashPlus webhook — external service has no JWT. Authenticity must be verified via signed-webhook check inside the service (TODO). |
+
+#### `DeliveryController`
+| Route | Guards | Notes |
+|---|---|---|
+| `POST /api/delivery/manifest`               | `JwtAuthGuard`, `RolesGuard` (`officer`)  | officer-only |
+| `GET  /api/delivery/:applicationId/status`  | `JwtAuthGuard`                            | any authenticated |
+| `POST /api/delivery/callback`               | **unguarded** | LibanPost webhook — same rationale as the payments callback. |
+
+### Auth Flow Fix — sync XHR shim removed
+
+`authService.loginAuthorized` previously used a blocking
+`XMLHttpRequest` to preserve a synchronous return type for
+`AuthorizedLoginPage.tsx`. It is now `async` and uses `fetch()`. Same
+session keys (`npis_token`, `npis_session`) and same `MockUser` return
+shape — only the call signature changed.
+
+**One-line `.tsx` change** in `AuthorizedLoginPage.tsx:22`:
+```diff
+- const user = authService.loginAuthorized(identifier, password);
++ const user = await authService.loginAuthorized(identifier, password);
+```
+The surrounding `handleSubmit` was already declared `async` and already
+wrapped in `try/catch`, so no other lines required modification.
+
+---
+
+## Session 17 — Mukhtar Form & Biometric Persistence
+
+### Branch
+`feature/backend-integration` (continuing).
+
+### Schema Touched
+- `mukhtar_forms` — `form_data` (jsonb), `signed`, `signed_by`,
+  `electronic_signature`, `signed_at`.
+- `biometric_data` — `verification_status` (defaults to `'Pending'`).
+- Both tables existed already; no migration required.
+
+### Backend Changes (`backend/src/applications/applications.service.ts`)
+
+#### `create()`
+After the `INSERT INTO applications ... RETURNING *`:
+1. **mukhtar_forms** — `INSERT INTO mukhtar_forms (application_id, form_data) VALUES ($1, $2)`
+   using `body.mukhtarFormData ?? {}` serialized as JSONB. Wrapped in
+   `try/catch`; a failure logs and does not roll back the application.
+2. **biometric_data** — when `body.biometricCaptured === true`:
+   `INSERT INTO biometric_data (application_id, verification_status)
+   VALUES ($1, 'Pending')`. Same non-fatal pattern.
+
+#### `signApplication()`
+After `current_status` UPDATE and `application_status_history` INSERT:
+- `UPDATE mukhtar_forms SET signed=true, signed_by=$1, signed_at=NOW(),
+  electronic_signature=$2 WHERE application_id=$3` with
+  `electronic_signature = 'SIG-<mukhtarId>-<Date.now()>'`. Non-fatal.
+
+#### `applicationSelect` (used by `findAll` / `findOne`)
+Added `LEFT JOIN mukhtar_forms mf ON mf.application_id = a.application_id`
+and exposed:
+- `mf.form_data AS mukhtar_form_data`
+- `mf.signed AS mukhtar_signed`
+- `mf.signed_at AS mukhtar_signed_at`
+- `mf.electronic_signature AS mukhtar_electronic_signature`
+
+### Frontend Changes
+
+#### `services/applicationService.ts` — `createApplication` POST body
+Real-mode body now also sends:
+```ts
+mukhtarFormData: {
+  address: application.mukhtarFormData?.address ?? '',
+  district: application.mukhtarFormData?.district ?? '',
+  mukhtarName: application.mukhtarFormData?.mukhtarName ?? '',
+},
+biometricCaptured: application.biometricCaptured ?? false,
+```
+
+#### `utils/apiAdapters.ts` — `mapApiApplicationToFrontend`
+New helper `parseMukhtarFormData` reads the joined `mukhtar_form_data`
+JSONB (snake→camel → `mukhtarFormData`) and produces the frontend
+shape `{ address, district, mukhtarName }` with empty-string fallbacks.
+Replaces the hard-coded empty object that was previously returned.
+
+### Verified
+- Backend `tsc --noEmit` clean.
+- Frontend `tsc --noEmit` clean.
+- Only one `.tsx` file modified (`AuthorizedLoginPage.tsx`, single
+  one-line change). All other component files untouched.
+
+### Open Follow-ups
+- Webhook signature verification on `/payments/callback` and
+  `/delivery/callback` (currently both intentionally unguarded with
+  comments explaining why).
+- Persist `mukhtar_signed_at` / `mukhtar_electronic_signature` into the
+  frontend `PassportApplication` interface so the officer detail panel
+  can show signature metadata sourced from the DB instead of localStorage.
+- `biometric_data` only records intent (`verification_status = 'Pending'`);
+  actual face/fingerprint blobs and ML verification still pending.

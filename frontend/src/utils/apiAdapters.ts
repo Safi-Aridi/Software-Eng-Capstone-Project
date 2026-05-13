@@ -106,6 +106,31 @@ const parseResubmissionReasons = (
 
 // ─── Full application mapper ──────────────────────────────────────────────────
 
+const parseMukhtarFormData = (
+  value: unknown,
+): PassportApplication["mukhtarFormData"] => {
+  const parsed =
+    typeof value === "string"
+      ? (() => {
+          try {
+            return JSON.parse(value) as unknown;
+          } catch {
+            return null;
+          }
+        })()
+      : value;
+  if (!parsed || typeof parsed !== "object") {
+    return { address: "", district: "", mukhtarName: "" };
+  }
+  const obj = parsed as Record<string, unknown>;
+  return {
+    address: typeof obj.address === "string" ? obj.address : "",
+    district: typeof obj.district === "string" ? obj.district : "",
+    mukhtarName:
+      typeof obj.mukhtarName === "string" ? obj.mukhtarName : "",
+  };
+};
+
 export const mapApiApplicationToFrontend = (raw: unknown): PassportApplication => {
   const c = snakeToCamel(raw) as Record<string, unknown>;
   const currentStatus = backendStatusToFrontend(
@@ -133,7 +158,7 @@ export const mapApiApplicationToFrontend = (raw: unknown): PassportApplication =
       passportPhoto: null,
       oldPassport: null,
     },
-    mukhtarFormData: { address: "", district: "", mukhtarName: "" },
+    mukhtarFormData: parseMukhtarFormData(c.mukhtarFormData),
     biometricCaptured: false,
   };
 };

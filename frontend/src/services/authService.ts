@@ -506,31 +506,29 @@ export const authService = {
     return mockUser;
   },
 
-  loginAuthorized: (identifier: string, password: string): MockUser => {
+  loginAuthorized: async (
+    identifier: string,
+    password: string,
+  ): Promise<MockUser> => {
     if (!identifier || !password) {
       throw new Error("Authorized ID/email and password are required");
     }
 
     if (!USE_MOCK_AUTH) {
-      // AuthorizedLoginPage calls this synchronously (no await), so we use a
-      // blocking XMLHttpRequest to preserve the existing return shape.
-      // Once that page is migrated to await an async call, swap this for fetch.
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", `${API_BASE_URL}/auth/login`, false);
-      xhr.setRequestHeader("Content-Type", "application/json");
+      let res: Response;
       try {
-        xhr.send(JSON.stringify({ email: identifier, password }));
+        res = await fetch(`${API_BASE_URL}/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: identifier, password }),
+        });
       } catch {
         throw new Error("Unable to reach authentication server");
       }
-      const body = (() => {
-        try {
-          return JSON.parse(xhr.responseText || "{}");
-        } catch {
-          return {};
-        }
-      })() as ApiLoginSuccess | ApiLoginError;
-      if (xhr.status < 200 || xhr.status >= 300) {
+      const body = (await res.json().catch(() => ({}))) as
+        | ApiLoginSuccess
+        | ApiLoginError;
+      if (!res.ok) {
         throw new Error(
           (body as ApiLoginError).message || "Invalid credentials",
         );

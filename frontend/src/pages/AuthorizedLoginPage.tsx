@@ -19,7 +19,7 @@ const AuthorizedLoginPage = () => {
         throw new Error('Authorized ID/email and password are required');
       }
 
-      const user = authService.loginAuthorized(identifier, password);
+      const user = await authService.loginAuthorized(identifier, password);
       if (user.role === "officer") {
         navigate("/officer/dashboard");
       } else {

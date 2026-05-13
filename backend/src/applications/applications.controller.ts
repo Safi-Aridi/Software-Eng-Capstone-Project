@@ -18,36 +18,46 @@ export class ApplicationsController {
   constructor(private readonly applicationsService: ApplicationsService) {}
 
   @Get()
+  @UseGuards(JwtAuthGuard)
   async findAll(@Query('role') role?: string) {
     return this.applicationsService.findAll(role);
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard)
   async findOne(@Param('id') id: string) {
     return this.applicationsService.findOne(id);
   }
 
   @Get(':id/status')
+  @UseGuards(JwtAuthGuard)
   async getStatus(@Param('id') id: string) {
     return this.applicationsService.getStatus(id);
   }
 
   @Post()
+  @UseGuards(JwtAuthGuard)
   create(@Body() body: any) {
     return this.applicationsService.create(body);
   }
 
   @Put(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('citizen', 'mukhtar', 'officer')
   update(@Param('id') id: string, @Body() body: any) {
     return this.applicationsService.update(id, body);
   }
 
   @Post(':id/sign')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('mukhtar')
   signApplication(@Param('id') id: string, @Body() body: any) {
     return this.applicationsService.signApplication(id, body);
   }
 
   @Post(':id/approve')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('officer')
   approveApplication(@Param('id') id: string, @Body() body: any) {
     return this.applicationsService.approveApplication(id, body);
   }
@@ -60,6 +70,8 @@ export class ApplicationsController {
   }
 
   @Post(':id/cancel-old-passport')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('officer')
   cancelOldPassport(@Param('id') id: string, @Body() body: any) {
     return this.applicationsService.cancelOldPassport(id, body);
   }
