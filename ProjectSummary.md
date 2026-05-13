@@ -791,186 +791,307 @@ NestJS needs `app.enableCors({ origin: [...] })` for the Vite dev server and pro
 
 ---
 
-*Last updated: Session 12 — Frontend–Backend Integration Layer*
+## Session 12 — Backend Integration: Auth & Applications
 
----
+### Branch
+`feature/backend-integration` — contains both frontend (root/frontend/) 
+and backend (root/backend/) after merging frontend-branch and 
+nestjs-backend-foundation into a single integration branch.
 
-## Session 12 — Frontend–Backend Integration Layer
+### What Was Integrated
 
-### Branch: `feature/backend-integration`
+#### 1. API Client (frontend/src/services/apiClient.ts)
+Activated from dormant state. Now:
+- Reads base URL from VITE_API_BASE_URL (defaults to http://localhost:5000/api)
+- Attaches Authorization: Bearer <token> from localStorage key 'npis_token' 
+  on every request
+- On 401 response: clears 'npis_token' and 'npis_session', redirects to '/'
+- Exposes: get<T>, post<T>, put<T>, patch<T>
+- Throws typed ApiError with { status, message } on non-2xx responses
 
-### Context:
-The backend (NestJS, raw PostgreSQL via `pg`, Supabase-hosted) was merged from `nestjs-backend-foundation`. This session wired the frontend service layer to real API calls while keeping all existing mock logic intact behind environment flags. No component files were modified.
+#### 2. Adapter Layer (frontend/src/utils/apiAdapters.ts) — NEW FILE
+Created to decouple backend data shapes from frontend types.
+All components remain untouched — only service files use these adapters.
 
----
+Functions:
+- snakeToCamel(obj): recursively converts snake_case keys to camelCase
+- backendStatusToFrontend(s): maps backend Title Case status strings to 
+  frontend SCREAMING_SNAKE_CASE
+- frontendStatusToBackend(s): reverse mapping
+- backendPaymentStatusToFrontend(s): maps 'Pending'→'UNPAID', etc.
+- frontendPaymentStatusToBackend(s): reverse mapping
+- backendAppTypeToFrontend(s): 'new_passport'→'NEW', 'renewal'→'RENEWAL'
+- frontendAppTypeToBackend(s): reverse mapping
+- mapApiApplicationToFrontend(raw): full mapping from raw DB row to 
+  PassportApplication interface
 
-### What Was Wired (Live API Calls)
+Status mapping table:
+| Backend (DB)                              | Frontend                |
+|-------------------------------------------|-------------------------|
+| 'Pending'                                 | 'PENDING_REVIEW'        |
+| 'Verified'                                | 'VERIFIED'              |
+| 'Mukhtar Signed'                          | 'MUKHTAR_SIGNED'        |
+| 'Processed for Issuance'                  | 'PROCESSED'             |
+| 'Issued'                                  | 'ISSUED'                |
+| 'Resubmission Required'                   | 'RESUBMISSION_REQUIRED' |
+| 'Delivered'                               | 'DELIVERED'             |
+| 'Delivery Failed - Branch Collection Required' | 'DELIVERED'        |
 
-| Domain | Env Flag | Endpoints Wired |
+Role mapping (backend DB → frontend):
+| DB role_name | Frontend UserRole |
+|--------------|-------------------|
+| 'citizen'    | 'citizen'         |
+| 'mukhtar'    | 'mukhtar'         |
+| 'gs_officer' | 'officer'         |
+| 'admin'      | 'admin'           |
+This mapping is applied in backend/src/auth/auth.service.ts 
+mapRoleToFrontend() before signing the JWT.
+
+Fields with safe defaults (backend doesn't store these yet):
+- passportValidity: 5
+- feeAmount: 0
+- renewingPassportId: null
+- resubmissionReasons: null
+- documents: { identityDocument: null, passportPhoto: null, oldPassport: null }
+- mukhtarFormData: { address: '', district: '', mukhtarName: '' }
+- biometricCaptured: false
+
+#### 3. Environment Flags (frontend/.env.development)
+| Flag                       | Value | Reason                              |
+|----------------------------|-------|-------------------------------------|
+| VITE_API_BASE_URL          | http://localhost:5000/api | Backend port |
+| VITE_USE_MOCK_AUTH         | false | Real auth implemented               |
+| VITE_USE_MOCK_APPLICATIONS | false | Real DB working                     |
+| VITE_USE_MOCK_PAYMENTS     | true  | CashPlus not integrated             |
+| VITE_USE_MOCK_MUKHTAR      | false | Endpoint exists                     |
+| VITE_USE_MOCK_OFFICER      | false | Endpoint exists                     |
+| VITE_USE_MOCK_NOTIFICATIONS| true  | No notifications table in DB        |
+| VITE_USE_MOCK_PASSPORTS    | true  | No passports table in DB            |
+| VITE_USE_MOCK_KYC          | true  | KYC endpoint is stub only           |
+
+#### 4. Real Authentication (backend/src/auth/auth.service.ts)
+Replaced stub with full implementation against real Supabase DB.
+
+Login flow:
+1. Query: SELECT u.*, r.role_name FROM users u JOIN roles r ON 
+   u.role_id = r.role_id WHERE u.email = $1
+2. Check account_status = 'locked' and locked_until timestamp
+   - If still locked: return 401 with lockedUntil
+   - If expired: reset account_status='active', failed_attempts=0
+3. bcrypt.compare(password, password_hash)
+4. Wrong password: increment failed_attempts; if >= 3 set 
+   account_status='locked', locked_until = NOW() + INTERVAL '15 minutes'
+5. Correct: reset failed_attempts=0, sign JWT, return token + user
+
+JWT payload: { id: user_id, email, role: mappedRole, iat, exp }
+JWT expiry: 2 hours
+JWT secret: JWT_SECRET env var
+
+Register flow:
+1. Check email uniqueness
+2. bcrypt hash password (saltRounds: 10)
+3. INSERT INTO users with role_id=1 (citizen)
+4. INSERT INTO citizen_profiles (citizen_id=user_id)
+5. Return JWT + user object
+
+#### 5. Application Service Wiring (frontend/src/services/applicationService.ts)
+All functions gated behind VITE_USE_MOCK_APPLICATIONS flag.
+
+| Function | Endpoint | Notes |
 |---|---|---|
-| Applications | `VITE_USE_MOCK_APPLICATIONS=false` | `GET /api/applications`, `GET /api/applications/:id`, `POST /api/applications`, `PUT /api/applications/:id` |
-| Mukhtar queue | `VITE_USE_MOCK_MUKHTAR=false` | `GET /api/mukhtar/pending`, `POST /api/applications/:id/sign` |
-| Officer queue | `VITE_USE_MOCK_OFFICER=false` | `GET /api/officer/pending`, `POST /api/applications/:id/approve` |
+| getApplications(userId) | GET /api/applications | Filters client-side by citizenId |
+| getApplicationById(id) | GET /api/applications/:id | — |
+| createApplication(data) | POST /api/applications | Sends citizenId, applicationType, validityId |
+| updateApplicationStatus(id, status) | PUT /api/applications/:id | Maps status to backend format |
 
-### What Stays Mocked (and Why)
+#### 6. Mukhtar Service Wiring (frontend/src/services/mukhtarService.ts)
+Gated behind VITE_USE_MOCK_MUKHTAR.
 
-| Domain | Env Flag | Reason |
+| Function | Endpoint | Notes |
 |---|---|---|
-| Auth | `VITE_USE_MOCK_AUTH=true` | Backend `auth.service.ts` is a stub — no users table, no password check. Requires a real `users` table + `bcrypt` before wiring. |
-| Payments | `VITE_USE_MOCK_PAYMENTS=true` | `POST /api/payments/initiate` is a stub. Real CashPlus integration not yet built. |
-| Notifications | `VITE_USE_MOCK_NOTIFICATIONS=true` | Backend notification endpoint has no user filtering — returns hardcoded demo data. |
-| KYC | `VITE_USE_MOCK_KYC=true` | All three KYC endpoints (`submit`, `status`, `resubmit`) are stubs with no DB interaction. |
-| Passports | `VITE_USE_MOCK_PASSPORTS=true` | No `passports` table in the backend schema yet. |
-| Officer issuance (Tab 2) | Always mocked | No backend endpoint for `PROCESSED → ISSUED` transition or passport creation. `issueApplication` and `cancelOldPassport` remain localStorage-only. |
+| getPendingApplications() | GET /api/mukhtar/pending | Requires mukhtar JWT |
+| signApplication(id, mukhtarId) | POST /api/applications/:id/sign | notificationService.create() kept as TODO |
+
+#### 7. Officer Service Wiring (frontend/src/services/officerService.ts)
+Gated behind VITE_USE_MOCK_OFFICER.
+
+| Function | Endpoint | Notes |
+|---|---|---|
+| getPendingApplications() | GET /api/officer/pending | Requires officer JWT |
+| approveApplication(id, officerId) | POST /api/applications/:id/approve | → 'Processed for Issuance' |
+| ISSUED flow | — | Stays mocked — no backend endpoint yet |
 
 ---
 
-### New Files Created
+### Database Schema — Key Facts for Future Integration
 
-#### `frontend/.env.development`
-Vite environment file consumed at build time. Sets `VITE_API_BASE_URL=http://localhost:5000/api` and all mock flags. Never committed with real secrets — only flag values and the local API URL.
+#### Real Supabase Tables (public schema)
+All confirmed live and connected:
 
-#### `frontend/src/utils/apiAdapters.ts`
-Stateless pure-function adapter utilities isolating all data-shape translation from service logic. Components are untouched.
+**users**
+| Column | Type | Notes |
+|---|---|---|
+| user_id | uuid PK | gen_random_uuid() |
+| role_id | int FK → roles | 1=citizen, 2=mukhtar, 3=gs_officer, 4=admin |
+| first_name | varchar NOT NULL | |
+| last_name | varchar NOT NULL | |
+| email | varchar UNIQUE NOT NULL | |
+| phone | varchar UNIQUE NOT NULL | |
+| password_hash | text | bcrypt, saltRounds=10 |
+| national_id | varchar | |
+| account_status | varchar | 'active' or 'locked' |
+| failed_attempts | int | default 0, resets on success |
+| locked_until | timestamp | null when not locked |
+| created_at | timestamp | now() |
 
-**Functions exported:**
+**roles** (lookup table)
+| role_id | role_name | description |
+|---|---|---|
+| 1 | citizen | Citizen applicant |
+| 2 | mukhtar | Local verification authority |
+| 3 | gs_officer | General Security officer |
+| 4 | admin | System administrator |
 
-| Function | Purpose |
+**applications**
+| Column | Type | Notes |
+|---|---|---|
+| application_id | uuid PK | |
+| citizen_id | uuid FK → citizen_profiles | NOT users.user_id directly |
+| service_type_id | int | default 1 |
+| validity_id | int FK → passport_validity_options | 1=5yr, 2=10yr |
+| application_type | varchar | 'new_passport' or 'renewal' |
+| current_status | varchar | Title Case (see mapping table above) |
+| payment_status | varchar | 'Pending', 'Paid', 'Failed' |
+| tracking_number | varchar | auto-generated TRK-<timestamp> |
+| assigned_mukhtar_id | uuid FK → users | nullable |
+| assigned_officer_id | uuid FK → users | nullable |
+| assigned_branch_id | int FK → branches | nullable |
+| estimated_completion_date | date | nullable |
+| created_at | timestamp | |
+| completed_at | timestamp | nullable |
+
+**citizen_profiles**
+| Column | Notes |
 |---|---|
-| `snakeToCamel(obj)` | Recursively converts snake_case keys to camelCase on any object/array tree |
-| `backendStatusToFrontend(s)` | Maps backend Title-Case-with-spaces status strings to frontend SCREAMING_SNAKE_CASE |
-| `frontendStatusToBackend(s)` | Reverse of above |
-| `backendPaymentStatusToFrontend(s)` | `'Pending'→'UNPAID'`, `'Paid'→'Paid'`, `'Failed'→'Failed'` |
-| `frontendPaymentStatusToBackend(s)` | Reverse of above |
-| `backendAppTypeToFrontend(s)` | `'new_passport'→'NEW'`, `'renewal'→'RENEWAL'` |
-| `frontendAppTypeToBackend(s)` | Reverse of above |
-| `mapApiApplicationToFrontend(raw)` | Runs `snakeToCamel`, renames `citizenId→userId`, applies all status/type mappers, fills frontend-only fields (`passportValidity:5`, `feeAmount:0`, `documents:null`, `biometricCaptured:false`, etc.) with safe defaults |
+| citizen_id | uuid PK — same as user_id for simplicity in current seed |
+| user_id | uuid FK → users |
+| date_of_birth, address, village, district, governorate | nullable |
+| national_registry_number | nullable |
+| phone_verified | boolean default false |
 
-**Status mapping table:**
+**passport_validity_options**
+| validity_id | validity_years | fee_amount |
+|---|---|---|
+| 1 | 5 | 200.00 USD |
+| 2 | 10 | 350.00 USD |
 
-| Backend (DB) | Frontend |
-|---|---|
-| `'Pending'` | `'PENDING_REVIEW'` |
-| `'Verified'` | `'VERIFIED'` |
-| `'Mukhtar Signed'` | `'MUKHTAR_SIGNED'` |
-| `'Processed for Issuance'` | `'PROCESSED'` |
-| `'Issued'` | `'ISSUED'` |
-| `'Resubmission Required'` | `'RESUBMISSION_REQUIRED'` |
-| `'Delivered'` | `'DELIVERED'` |
-| `'Delivery Failed - Branch Collection Required'` | `'DELIVERED'` |
+**documents** (rows, not columns on application)
+Each document is a separate row with document_type:
+'identity_document', 'passport_photo', 'old_passport'
+file_url is a text URL (not base64 — future: Supabase Storage)
 
-#### `backend/seed.sql`
-SQL file for populating the Supabase database with reproducible test data. Not executed automatically — must be run manually against the database.
+**biometric_data**
+Separate table per application. verification_status: 'Pending','Verified','Failed'
+face_iso_format: 'ISO/IEC 19794-5', fingerprint_iso_format: 'ISO/IEC 19794-4'
 
-**How to run:**
-```bash
-psql "$DATABASE_URL" -f backend/seed.sql
-```
-Or paste into the Supabase SQL editor.
+**mukhtar_forms**
+form_data is JSONB. Stores address, district, mukhtarName.
+signed, signed_by, electronic_signature, signed_at tracked here.
 
-**What it seeds:**
-- `passport_validity_options`: rows for 5-year (id=1, fee=200.00) and 10-year (id=2, fee=350.00)
-- 3 applications under citizen UUID `a1b2c3d4-0000-0000-0000-000000000001`:
-  - `TRK-TEST-001`: `new_passport`, `Mukhtar Signed`, payment `Paid` — visible in Officer Tab 1
-  - `TRK-TEST-002`: `renewal`, `Pending`, payment `Pending` — visible in citizen dashboard
-  - `TRK-TEST-003`: `new_passport`, `Pending`, payment `Failed` — tests failed-payment display
-- Documents for each application (`identity_document`, `passport_photo`; plus `old_passport` for renewal)
-- Mukhtar form for App 1 (Hamra St, Beirut, Khalil Raad) — signed=true
-- One status history row per application
-- All inserts use `ON CONFLICT DO NOTHING` — safe to re-run
+**Missing tables (frontend mocks these)**
+- passports — needed for Phase 11 ISSUED flow and expiry banners
+- notifications — needed for real-time status updates
+- resubmission_requests — needed for ML rejection flow
 
 ---
 
-### Files Modified
+### Backend Constraints for Future ML Integration
 
-#### `frontend/src/services/apiClient.ts`
-- Base URL now reads `VITE_API_BASE_URL`, falls back to `http://localhost:5000/api` (was `:3000`)
-- Token read from `localStorage.getItem('npis_token')` (was reading inside `npis_user` JSON)
-- 401 handler: clears `npis_token` and `npis_session`, then redirects to `/`
-- `ApiError` class updated: now carries `status: number` (was `statusCode`)
-- `patch()` method retained for future use
+#### Status Transition Rules (enforce in ML service)
+Valid transitions only:
+PENDING_REVIEW → VERIFIED (ML approves docs)
+PENDING_REVIEW → RESUBMISSION_REQUIRED (ML rejects docs)
+RESUBMISSION_REQUIRED → PENDING_REVIEW (citizen resubmits)
+VERIFIED → MUKHTAR_SIGNED (Mukhtar signs)
+MUKHTAR_SIGNED → PROCESSED (Officer approves)
+PROCESSED → ISSUED (Officer issues booklet) ← not in DB yet
+ISSUED → DELIVERED (LibanPost callback) ← not in DB yet
+Use application_status_history table to log every transition 
+with old_status, new_status, change_reason, changed_at.
 
-#### `frontend/src/services/applicationService.ts`
-- Added `const USE_MOCK = import.meta.env.VITE_USE_MOCK_APPLICATIONS === 'true'`
-- Added imports: `apiClient`, `mapApiApplicationToFrontend`, `frontendAppTypeToBackend`, `frontendStatusToBackend`
-- `getApplications(userId)` — mock: unchanged localStorage scan; live: `GET /api/applications` + client-side filter by `citizenId`
-- `getApplicationById(userId, id)` — mock: unchanged; live: `GET /api/applications/:id`
-- `createApplication(userId, application)` — mock: unchanged; live: `POST /api/applications` with `{ citizenId, applicationType, validityId }`
-- `updateApplicationStatus(id, status)` — new function; mock: scans localStorage; live: `PUT /api/applications/:id`
-- All other functions (`updateApplicationDocuments`, `getApplicationStatus`, `saveApplication`, `updateApplication`, `generateTrackingNumber`) unchanged
+#### When ML Is Integrated (FR-20 to FR-27)
+1. ML service should write directly to applications.current_status 
+   via PUT /api/applications/:id with { currentStatus: 'Verified' } 
+   or { currentStatus: 'Resubmission Required' }
+2. ML must also write to application_status_history on every transition
+3. Document verification results should update documents.verification_status
+   and documents.verification_notes per document row
+4. Biometric verification results go to biometric_data.verification_status
+5. Mukhtar routing (FR-24) should set assigned_mukhtar_id on the application
+   based on citizen's district matching mukhtar_profiles.district
+6. Post-signature integrity check (FR-25) should verify the 
+   electronic_signature field in mukhtar_forms
 
-#### `frontend/src/services/mukhtarService.ts`
-- Added `const USE_MOCK = import.meta.env.VITE_USE_MOCK_MUKHTAR === 'true'`
-- Added imports: `apiClient`, `mapApiApplicationToFrontend`
-- `getPendingApplicationsFull()` — mock: unchanged; live: `GET /api/mukhtar/pending`, maps to `EnrichedApplication[]` with `citizenIdentity: null`
-- `signApplication()` — mock: unchanged (signature generation + localStorage update + notification); live: `POST /api/applications/:id/sign` + notification side-effect retained with TODO marker
-- `rejectApplication()`, `requestResubmission()`, `getStoredSignature()`, `getSignatureMetadata()` — unchanged (mock only)
+#### When Notifications Are Integrated
+1. Create a notifications table with: notification_id, user_id, 
+   application_id, message, is_read, created_at
+2. Remove all notificationService.create() calls from frontend 
+   mukhtarService.ts and officerService.ts (marked with TODO comments)
+3. Backend should emit notifications on every status transition
+4. Set VITE_USE_MOCK_NOTIFICATIONS=false once table exists
 
-#### `frontend/src/services/officerService.ts`
-- Added `const USE_MOCK = import.meta.env.VITE_USE_MOCK_OFFICER === 'true'`
-- Added imports: `apiClient`, `mapApiApplicationToFrontend`
-- `getProcessingQueueFull()` — mock: unchanged; live: `GET /api/officer/pending`, maps to `EnrichedApplication[]` with `citizenIdentity: null`
-- `approveApplication()` — mock: unchanged; live: `POST /api/applications/:id/approve` + notification side-effect retained with TODO marker
-- `getIssuanceQueueFull()`, `issueApplication()`, `cancelOldPassport()` — always mocked (issuance flow has no backend endpoint yet); explicit comments added
+#### When Passports Table Is Added
+1. Create passports table matching the frontend Passport interface:
+   passportId, userId, sourceApplicationId, bookletNumber, 
+   status (ACTIVE/CANCELLED), issuedAt, expiresAt, 
+   cancelledAt, cancelledByApplicationId
+2. Add ISSUED status to applications.current_status valid values
+3. Add renewing_passport_id FK column to applications table
+4. Add POST /api/applications/:id/issue endpoint (takes bookletNumber)
+5. Set VITE_USE_MOCK_PASSPORTS=false once implemented
 
----
-
-### Backend Fixes Required Before Auth Can Be Wired
-
-The following backend changes are needed before `VITE_USE_MOCK_AUTH` can be set to `false`:
-
-1. **`users` table** — No users table exists in the backend. Create it with at minimum: `user_id UUID PK`, `email TEXT UNIQUE`, `mobile_number TEXT UNIQUE`, `password_hash TEXT`, `role TEXT`, `account_status TEXT`, `created_at TIMESTAMP`.
-
-2. **Password hashing** — Install `bcrypt` (or `argon2`). Hash passwords on `register`, compare on `login`. Never store plaintext.
-
-3. **Real `register` endpoint** — Current implementation returns `{ success: true, receivedData: body }` with no DB write. Must `INSERT INTO users` and return a JWT.
-
-4. **Real `login` endpoint** — Current implementation mints a JWT from whatever `body.role` is passed (no credential check). Must look up user by email/mobile, verify password hash, return `{ token, user: { id, email, role, accountStatus } }`.
-
-5. **`accountStatus` on JWT or `/me` response** — The frontend session stores `accountStatus` (one of `NO_IDENTITY_VERIFICATION | PENDING_IDENTITY_VERIFICATION | IDENTITY_VERIFICATION_REJECTED | ACTIVE | LOCKED`). The backend must return this field on login and `/me` so the frontend can route correctly after authentication.
-
-6. **Account lockout** — FR-05.1: lock after 3 failed attempts, auto-unlock after 15 minutes. This logic currently lives entirely in `authService.ts` (frontend). The backend `users` table needs `failed_login_attempts INT` and `locked_at TIMESTAMP` columns, and the login endpoint must enforce the lock.
-
-7. **Session key alignment** — The frontend stores the JWT under `localStorage.key('npis_token')` and the full session object under `npis_session`. Confirm `authService.ts` is updated to write to these keys (currently writes `npis_user`) before toggling the auth flag.
+#### When LibanPost Is Integrated (FR-31)
+Trigger manifest at ISSUED status (not PROCESSED — intentional 
+deviation from SRS, see Session 11 notes).
 
 ---
 
-### Environment Flag Reference
+### Migration Files
+| File | Purpose | Status |
+|---|---|---|
+| backend/migrations/001_seed_test_users.sql | Seeds 5 test users + profiles | Run in Supabase |
+| backend/seed.sql | Seeds 3 test applications + documents | Run in Supabase |
 
-| Flag | Current Value | Effect when `true` | Effect when `false` |
-|---|---|---|---|
-| `VITE_USE_MOCK_AUTH` | `false` | localStorage mock login/register | Real `POST /api/auth/login` and `/register` |
-| `VITE_USE_MOCK_APPLICATIONS` | `false` | localStorage CRUD | Real `GET/POST/PUT /api/applications` |
-| `VITE_USE_MOCK_MUKHTAR` | `false` | localStorage scan | Real `GET /api/mukhtar/pending` + sign endpoint |
-| `VITE_USE_MOCK_OFFICER` | `false` | localStorage scan | Real `GET /api/officer/pending` + approve endpoint |
-| `VITE_USE_MOCK_PAYMENTS` | `true` | Simulated CashPlus callback | Real `POST /api/payments/initiate` |
-| `VITE_USE_MOCK_NOTIFICATIONS` | `true` | Per-user localStorage notifications | Real `GET /api/notifications` (requires user filtering in backend first) |
-| `VITE_USE_MOCK_KYC` | `true` | KYC status in localStorage | Real `/api/kyc/*` (requires backend implementation first) |
-| `VITE_USE_MOCK_PASSPORTS` | `true` | Passport records in localStorage | Real `/api/passports/*` (requires passports table in backend first) |
-
----
-
-### Session 12 Addendum — Real Authentication Wired
-
-The seven backend gaps listed above are now closed for the citizen/mukhtar/officer login path.
-
-**Backend**
-- New `public.users` table created via `backend/migrations/001_create_users.sql` (UUID PK, unique email, bcrypt `password_hash`, role check constraint, `failed_login_attempts`, `is_locked`, `locked_at`). Same migration rewires `citizen_profiles`, `mukhtar_profiles`, and `gs_officer_profiles` FKs to reference `users(user_id) ON DELETE CASCADE`.
-- `backend/migrations/002_seed_users.sql` seeds 5 test users (all password `test123`, bcrypt saltRounds=10) plus matching profile rows. Idempotent via `ON CONFLICT DO NOTHING`.
-- `backend/src/auth/auth.service.ts` rewritten — bcrypt hash/compare, `JwtService`-signed tokens (`{ id, email, role }`), real DB lookups via `DatabaseService`. Enforces FR-05.1 server-side: 3 failed attempts → lock + 15-minute auto-unlock window.
-- `bcrypt` + `@types/bcrypt` installed in `backend/package.json`.
-- `auth.module.ts` now imports `DatabaseModule`.
-
-**Test user UUIDs** (all password `test123`)
-
+### Test Credentials (password: test123 for all)
 | Email | Role | UUID |
 |---|---|---|
-| `accepted@test.com` | citizen | `a1b2c3d4-0000-0000-0000-000000000001` |
-| `pending@test.com` | citizen | `a1b2c3d4-0000-0000-0000-000000000002` |
-| `rejected@test.com` | citizen | `a1b2c3d4-0000-0000-0000-000000000003` |
-| `mukhtar@test.com` | mukhtar | `a1b2c3d4-0000-0000-0000-000000000004` |
-| `officer@test.com` | officer | `a1b2c3d4-0000-0000-0000-000000000005` |
+| accepted.user@test.com | citizen | a1b2c3d4-0000-0000-0000-000000000001 |
+| pending.user@test.com | citizen | a1b2c3d4-0000-0000-0000-000000000002 |
+| rejected.user@test.com | citizen | a1b2c3d4-0000-0000-0000-000000000003 |
+| mukhtar.user@test.com | mukhtar | a1b2c3d4-0000-0000-0000-000000000004 |
+| officer.user@test.com | officer | a1b2c3d4-0000-0000-0000-000000000005 |
 
-**Frontend**
-- `frontend/src/services/authService.ts` — added real-API branches behind `USE_MOCK_AUTH` flag. Public methods `login`, `register`, `getCurrentUser`, `logout` route to `apiLogin/apiRegister/readApiSession/apiLogout` when flag is false; mock behaviour is preserved when true. Real flow writes JWT to `npis_token` and a `{ userId, email, role, fullName }` record to `npis_session`. `LoginResult` shape unchanged; lockout fields parsed from backend 401 body. `loginAuthorized` (mukhtar/officer page) remains on mock data — no component file changes.
-- `frontend/.env.development` — `VITE_USE_MOCK_AUTH=false`.
+Note: emails were changed from original frontend seeds 
+(accepted@test.com etc.) to avoid conflicts with existing 
+Supabase rows. Update seedTestData.ts to match when wiring 
+the full citizen signup flow.
+
+### Verified Working (End-to-End Tested)
+- POST /api/auth/login → real bcrypt check → JWT → 201
+- GET /api/applications → real Supabase rows → 200/304
+- Authorization header sent on all requests
+- Status mapping: 'Mukhtar Signed' → 'MUKHTAR_SIGNED' ✅
+- Role mapping: 'gs_officer' → 'officer' ✅
+- Client-side userId filter matching real UUIDs ✅
+- Account lockout after 3 failed attempts ✅
+- Auto-unlock after 15 minutes ✅
+
+### What Stays Mocked
+- KYC submission (backend stub, no DB table)
+- Payments (CashPlus not connected)
+- Notifications (no DB table)
+- Passports (no DB table)
+- ISSUED status flow (no backend endpoint)
+- Mukhtar/officer login page (loginAuthorized() still mock)
+- Document upload (base64 in localStorage, no Supabase Storage)
+- Application creation from form (needs citizenId from real session)
