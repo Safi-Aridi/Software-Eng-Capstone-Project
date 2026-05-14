@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { PassportsService } from '../passports/passports.service';
 
 type ResubmissionReasons = Partial<{
   identityDocument: string;
@@ -19,7 +21,44 @@ export class ApplicationsService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly auditService: AuditService,
+    private readonly notificationsService: NotificationsService,
+    private readonly passportsService: PassportsService,
   ) {}
+
+  // Helper: resolve a citizen application's owning user_id via citizen_profiles.
+  private async getCitizenUserId(applicationId: string): Promise<string | null> {
+    const result = await this.databaseService.query(
+      `SELECT cp.user_id
+       FROM applications a
+       JOIN citizen_profiles cp ON cp.citizen_id = a.citizen_id
+       WHERE a.application_id = $1`,
+      [applicationId],
+    );
+    return (result.rows[0]?.user_id as string) ?? null;
+  }
+
+  // Helper: resolve a mukhtar's user_id from mukhtar_profiles by mukhtar_id.
+  private async getMukhtarUserId(mukhtarId: string): Promise<string | null> {
+    const result = await this.databaseService.query(
+      `SELECT user_id FROM mukhtar_profiles WHERE mukhtar_id = $1`,
+      [mukhtarId],
+    );
+    return (result.rows[0]?.user_id as string) ?? null;
+  }
+
+  // Helper: safely emit a notification — never throws into the caller.
+  private async notify(
+    userId: string | null,
+    applicationId: string | null,
+    message: string,
+  ): Promise<void> {
+    if (!userId) return;
+    try {
+      await this.notificationsService.create(userId, applicationId, message);
+    } catch (err) {
+      console.error('[applications.notify] failed:', err);
+    }
+  }
 
   private readonly applicationSelect = `
     SELECT
@@ -189,11 +228,8 @@ export class ApplicationsService {
           JSON.stringify(body.mukhtarFormData ?? {}),
         ],
       );
-    } catch (err) {
-      console.error(
-        `[applications.create] mukhtar_forms insert failed for ${newApplicationId}:`,
-        err,
-      );
+    } catch (error) {
+      console.error('[ERROR] mukhtar_forms insert failed:', error);
     }
 
     // Record biometric capture intent so the ML pipeline can pick it up.
@@ -335,6 +371,13 @@ export class ApplicationsService {
       });
     }
 
+    const citizenUserId = await this.getCitizenUserId(id);
+    await this.notify(
+      citizenUserId,
+      id,
+      'Your application requires document resubmission. Please check the details.',
+    );
+
     return {
       success: true,
       message: 'Resubmission requested successfully',
@@ -384,6 +427,27 @@ export class ApplicationsService {
         entityType: 'application',
         entityId: id,
       });
+    }
+
+    // Notify the assigned Mukhtar (if any) that documents are back in their queue.
+    try {
+      const assignedRow = await this.databaseService.query(
+        `SELECT assigned_mukhtar_id FROM applications WHERE application_id = $1`,
+        [id],
+      );
+      const assignedMukhtarId = assignedRow.rows[0]?.assigned_mukhtar_id as
+        | string
+        | null;
+      if (assignedMukhtarId) {
+        const mukhtarUserId = await this.getMukhtarUserId(assignedMukhtarId);
+        await this.notify(
+          mukhtarUserId,
+          id,
+          'A citizen has resubmitted documents for your review.',
+        );
+      }
+    } catch (err) {
+      console.error('[applications.resubmitDocuments] mukhtar notify failed:', err);
     }
 
     return {
@@ -447,6 +511,13 @@ export class ApplicationsService {
       entityId: id,
     });
 
+    const citizenUserId = await this.getCitizenUserId(id);
+    await this.notify(
+      citizenUserId,
+      id,
+      'Your application has been signed by your Mukhtar and is now under review.',
+    );
+
     return {
       success: true,
       message: 'Application signed successfully',
@@ -488,6 +559,13 @@ export class ApplicationsService {
       entityId: id,
     });
 
+    const citizenUserId = await this.getCitizenUserId(id);
+    await this.notify(
+      citizenUserId,
+      id,
+      'Your application has been approved and is being processed for issuance.',
+    );
+
     return {
       success: true,
       message: 'Application approved successfully',
@@ -504,6 +582,117 @@ export class ApplicationsService {
       applicationId: id,
       cancelledBy: body.officerId || 'demo-officer-id',
       oldPassportStatus: 'Cancelled',
+    };
+  }
+
+  async issueApplication(
+    applicationId: string,
+    officerId: string,
+    bookletNumber: string,
+  ) {
+    // 1. Load the application
+    const appRow = await this.databaseService.query(
+      `SELECT citizen_id, validity_id, application_type,
+              renewing_passport_id, current_status
+       FROM applications
+       WHERE application_id = $1`,
+      [applicationId],
+    );
+    if (appRow.rowCount === 0) {
+      throw new NotFoundException(
+        `Application with ID ${applicationId} not found`,
+      );
+    }
+    const app = appRow.rows[0];
+    const oldStatus = app.current_status as string | null;
+
+    // 2. Validity years
+    const validityRow = await this.databaseService.query(
+      `SELECT validity_years FROM passport_validity_options WHERE validity_id = $1`,
+      [app.validity_id],
+    );
+    const validityYears = (validityRow.rows[0]?.validity_years as number) ?? 5;
+
+    // 3. Citizen user_id
+    const profile = await this.databaseService.query(
+      `SELECT user_id FROM citizen_profiles WHERE citizen_id = $1`,
+      [app.citizen_id],
+    );
+    const citizenUserId = profile.rows[0]?.user_id as string | undefined;
+    if (!citizenUserId) {
+      throw new NotFoundException(
+        `Citizen profile not found for application ${applicationId}`,
+      );
+    }
+
+    // 4. Create the passport
+    const createdPassport = await this.passportsService.createPassport({
+      userId: citizenUserId,
+      sourceApplicationId: applicationId,
+      bookletNumber,
+      validityYears,
+    });
+
+    // 5. Cancel the renewed passport, if any
+    let cancelledPassport: unknown = null;
+    if (
+      app.application_type === 'renewal' &&
+      app.renewing_passport_id
+    ) {
+      cancelledPassport = await this.passportsService.cancelPassport(
+        app.renewing_passport_id as string,
+        applicationId,
+      );
+    }
+
+    // 6. Update application: status, officer, completion timestamp
+    const updated = await this.databaseService.query(
+      `UPDATE applications
+       SET current_status = 'Issued',
+           assigned_officer_id = $1,
+           completed_at = NOW()
+       WHERE application_id = $2
+       RETURNING *`,
+      [officerId, applicationId],
+    );
+
+    // 7. Status history entry
+    await this.databaseService.query(
+      `INSERT INTO application_status_history
+         (application_id, old_status, new_status, change_reason)
+       VALUES ($1, $2, $3, $4)`,
+      [applicationId, oldStatus, 'Issued', 'GS Officer issued passport booklet'],
+    );
+
+    await this.auditService.createLog({
+      userId: officerId,
+      action: 'PASSPORT_ISSUED',
+      entityType: 'application',
+      entityId: applicationId,
+    });
+
+    // 8. Notify citizen
+    await this.notify(
+      citizenUserId,
+      applicationId,
+      'Your passport has been issued and will be delivered soon.',
+    );
+
+    // 9. LibanPost manifest placeholder
+    // TODO FR-31: Replace with real LibanPost API call
+    console.log('[LibanPost] Manifest triggered for:', {
+      applicationId,
+      bookletNumber,
+      citizenUserId,
+    });
+
+    return {
+      success: true,
+      message: 'Application issued successfully',
+      applicationId,
+      application: updated.rows[0],
+      passport: createdPassport,
+      cancelledPassport,
     };
   }
 }

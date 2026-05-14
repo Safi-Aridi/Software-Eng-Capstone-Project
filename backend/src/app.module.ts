@@ -12,6 +12,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { PaymentsModule } from './payments/payments.module';
 import { DeliveryModule } from './delivery/delivery.module';
 import { AuditModule } from './audit/audit.module';
+import { PassportsModule } from './passports/passports.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { AuditModule } from './audit/audit.module';
     PaymentsModule,
     DeliveryModule,
     AuditModule,
+    PassportsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

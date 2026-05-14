@@ -3,6 +3,10 @@
 
 import type { Passport } from "../types/passport";
 import type { PassportApplication } from "./applicationService";
+import { apiClient } from "./apiClient";
+import { snakeToCamel } from "../utils/apiAdapters";
+
+const USE_MOCK = import.meta.env.VITE_USE_MOCK_PASSPORTS === "true";
 
 export type ExpirySeverity = "info" | "warning" | "critical" | "expired";
 
@@ -31,7 +35,23 @@ const writePassports = (userId: string, passports: Passport[]): void => {
   localStorage.setItem(passportsKey(userId), JSON.stringify(passports));
 };
 
-// Find an application across all citizens' application stores.
+const mapApiPassport = (raw: unknown): Passport => {
+  const c = snakeToCamel(raw) as Record<string, unknown>;
+  return {
+    passportId: (c.passportId as string) ?? "",
+    userId: (c.userId as string) ?? "",
+    sourceApplicationId: (c.sourceApplicationId as string) ?? "",
+    bookletNumber: (c.bookletNumber as string) ?? "",
+    status: ((c.status as string) ?? "ACTIVE") as Passport["status"],
+    issuedAt: (c.issuedAt as string) ?? "",
+    expiresAt: (c.expiresAt as string) ?? "",
+    cancelledAt: (c.cancelledAt as string | null) ?? null,
+    cancelledByApplicationId:
+      (c.cancelledByApplicationId as string | null) ?? null,
+  };
+};
+
+// Find an application across all citizens' application stores (mock mode only).
 const findApplication = (
   applicationId: string,
 ): PassportApplication | null => {
@@ -51,9 +71,7 @@ const findApplication = (
   return null;
 };
 
-// Find an owning passport record across all citizen stores by passportId.
-// Used by cancelPassport — the renewal application carries renewingPassportId,
-// not the userId of the passport's owner.
+// Find an owning passport record across all citizen stores by passportId (mock).
 const findPassportOwner = (
   passportId: string,
 ): { userId: string; passport: Passport } | null => {
@@ -80,12 +98,28 @@ const generatePassportId = (): string => {
 };
 
 export const passportService = {
-  // TODO: POST /api/passports
   createPassport: async (
     userId: string,
     sourceApplicationId: string,
     bookletNumber: string,
   ): Promise<Passport> => {
+    if (!USE_MOCK) {
+      // Issuance creates the passport server-side via
+      // POST /api/applications/:id/issue (officerService.issueApplication).
+      // Keep this function for legacy callers but make it a no-op pass-through.
+      return {
+        passportId: "",
+        userId,
+        sourceApplicationId,
+        bookletNumber,
+        status: "ACTIVE",
+        issuedAt: new Date().toISOString(),
+        expiresAt: new Date().toISOString(),
+        cancelledAt: null,
+        cancelledByApplicationId: null,
+      };
+    }
+
     const sourceApp = findApplication(sourceApplicationId);
     const validityYears = sourceApp?.passportValidity ?? 5;
     const issuedAt = new Date();
@@ -110,21 +144,30 @@ export const passportService = {
     return passport;
   },
 
-  // TODO: GET /api/passports?userId=
   getPassportsByUser: async (userId: string): Promise<Passport[]> => {
+    if (!USE_MOCK) {
+      const rows = await apiClient.get<unknown[]>(
+        `/passports?userId=${encodeURIComponent(userId)}`,
+      );
+      return rows.map(mapApiPassport);
+    }
     return readPassports(userId);
   },
 
-  // TODO: GET /api/passports/active?userId=
   getActivePassport: async (userId: string): Promise<Passport | null> => {
-    return readPassports(userId).find((p) => p.status === "ACTIVE") ?? null;
+    const all = await passportService.getPassportsByUser(userId);
+    return all.find((p) => p.status === "ACTIVE") ?? null;
   },
 
-  // TODO: PATCH /api/passports/:id/cancel
   cancelPassport: async (
     passportId: string,
     cancelledByApplicationId: string,
   ): Promise<void> => {
+    if (!USE_MOCK) {
+      // Server cancels the renewed passport inside issueApplication.
+      // Keep this function for any frontend callers but treat it as a no-op.
+      return;
+    }
     const owner = findPassportOwner(passportId);
     if (!owner) return;
     const { userId } = owner;
@@ -140,14 +183,22 @@ export const passportService = {
     writePassports(userId, passports);
   },
 
-  // TODO: GET /api/passports/expiring?userId=
   // Returns ACTIVE passports whose expiry is within 6 months — with severity
   // metadata. Suppresses banners when an active+paid renewal application exists
-  // for the passport (see suppression logic below).
+  // for the passport (mock-only logic).
   getExpiringPassports: async (
     userId: string,
   ): Promise<ExpiringPassport[]> => {
-    const passports = readPassports(userId);
+    let passports: Passport[];
+    if (!USE_MOCK) {
+      const rows = await apiClient.get<unknown[]>(
+        `/passports/expiring?userId=${encodeURIComponent(userId)}`,
+      );
+      passports = rows.map(mapApiPassport);
+    } else {
+      passports = readPassports(userId);
+    }
+
     const apps: PassportApplication[] = (() => {
       const stored = localStorage.getItem(`applications_${userId}`);
       if (!stored) return [];
@@ -173,6 +224,7 @@ export const passportService = {
       if (passport.status !== "ACTIVE") continue;
       const expiryTime = new Date(passport.expiresAt).getTime();
       const msUntil = expiryTime - now;
+      // The backend already filters to <= 6 months, but the mock path needs this guard.
       if (msUntil > sixMonthsMs) continue;
 
       // Suppression: an active, paid renewal targeting this passport hides the banner.
@@ -192,7 +244,9 @@ export const passportService = {
       else severity = "info";
 
       // Honor info-tier dismissal unless severity has escalated since dismissal.
-      const dismissalRaw = localStorage.getItem(dismissalKey(passport.passportId));
+      const dismissalRaw = localStorage.getItem(
+        dismissalKey(passport.passportId),
+      );
       if (dismissalRaw && severity === "info") {
         try {
           const stored = JSON.parse(dismissalRaw) as {
@@ -223,7 +277,6 @@ export const passportService = {
     return result;
   },
 
-  // TODO: POST /api/passports/:id/dismiss-expiry-banner
   dismissExpiryBanner: async (
     passportId: string,
     severity: ExpirySeverity = "info",

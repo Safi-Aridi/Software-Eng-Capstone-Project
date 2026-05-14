@@ -212,14 +212,22 @@ export const officerService = {
   },
 
   // FR-18 (extension) — Second officer action: passport issuance.
-  // Stays mocked — no backend endpoint for issuance yet.
-  // TODO: POST /api/officer/applications/:id/issue
   issueApplication: async (
     _officerId: string,
     applicationId: string,
     bookletNumber: string,
     options?: { isRenewal?: boolean },
   ): Promise<{ success: boolean }> => {
+    if (!USE_MOCK) {
+      const resolvedOfficerId = getSessionUserId() ?? _officerId;
+      await apiClient.post(`/applications/${applicationId}/issue`, {
+        officerId: resolvedOfficerId,
+        bookletNumber,
+      });
+      // Server handles notification + LibanPost manifest + passport creation.
+      return { success: true };
+    }
+
     const timestamp = new Date().toISOString();
     let citizenUserId: string | null = null;
     let trackingNumber = "";
@@ -236,7 +244,6 @@ export const officerService = {
       };
     });
 
-    // TODO: Remove when backend is connected — NestJS handles notification creation server-side
     if (citizenUserId) {
       const renewalSuffix = options?.isRenewal
         ? " Your old passport has been cancelled."

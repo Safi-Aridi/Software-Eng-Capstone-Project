@@ -1480,3 +1480,144 @@ Replaces the hard-coded empty object that was previously returned.
   can show signature metadata sourced from the DB instead of localStorage.
 - `biometric_data` only records intent (`verification_status = 'Pending'`);
   actual face/fingerprint blobs and ML verification still pending.
+
+---
+
+## Session 18 — Notifications
+
+### Branch
+`feature/backend-integration` (continuing).
+
+### Migration
+`backend/migrations/003_notifications.sql` — creates `public.notifications`
+with `notification_id (uuid PK)`, `user_id (uuid FK → users)`,
+`application_id (uuid FK → applications, nullable)`, `message`, `is_read`,
+`created_at`. Plus `idx_notifications_user_id` and a `created_at DESC` index.
+
+### Backend
+- `NotificationsService` rewritten with real DB queries: `create`,
+  `getByUser`, `markAsRead`, `markAllAsRead`, `getUnreadCount`.
+- `NotificationsController` routes (all behind `JwtAuthGuard`):
+  - `GET    /api/notifications?userId=`
+  - `POST   /api/notifications`
+  - `PATCH  /api/notifications/:id/read`
+  - `PATCH  /api/notifications/read-all`  (body: `{ userId }`)
+  - `GET    /api/notifications/unread-count?userId=`
+- `NotificationsModule` now imports `DatabaseModule` + `AuthModule` and
+  `exports: [NotificationsService]`.
+- `ApplicationsModule` imports `NotificationsModule`.
+
+### Server-side notification emission (`ApplicationsService`)
+New helpers `getCitizenUserId`, `getMukhtarUserId`, and `notify`
+(non-throwing wrapper). Notifications now fire after:
+| Transition | Recipient | Message |
+|---|---|---|
+| `signApplication` → `Mukhtar Signed` | citizen | "Your application has been signed by your Mukhtar and is now under review." |
+| `approveApplication` → `Processed for Issuance` | citizen | "Your application has been approved and is being processed for issuance." |
+| `requestResubmission` → `Resubmission Required` | citizen | "Your application requires document resubmission. Please check the details." |
+| `resubmitDocuments` → `Pending` | assigned mukhtar (if any) | "A citizen has resubmitted documents for your review." |
+| `issueApplication` → `Issued` | citizen | "Your passport has been issued and will be delivered soon." |
+
+All notification calls wrapped in `try/catch` — a failure logs and never
+fails the parent transaction.
+
+### Frontend
+- `notificationService.ts` rewritten. Public methods kept synchronous so
+  no `.tsx` changes are required: each read returns whatever is currently
+  cached under `localStorage['notifications_<userId>']` and kicks off a
+  background `fetch` that refreshes that cache. `markAsRead` and
+  `markAllAsRead` update the cache immediately and fire-and-forget the
+  PATCH. `create()` is a server-handled no-op when
+  `VITE_USE_MOCK_NOTIFICATIONS=false`.
+- `frontend/.env.development` → `VITE_USE_MOCK_NOTIFICATIONS=false`.
+
+### Verified
+- Backend `tsc --noEmit` clean.
+- Frontend `tsc --noEmit` clean.
+- No `.tsx` component files modified this session.
+
+---
+
+## Session 19 — Passports + ISSUED Flow
+
+### Branch
+`feature/backend-integration` (continuing).
+
+### Migration
+`backend/migrations/004_passports.sql`:
+- `public.passports` — `passport_id (uuid PK)`, `user_id (uuid FK)`,
+  `source_application_id (uuid FK)`, `booklet_number (varchar UNIQUE)`,
+  `status ∈ {ACTIVE, CANCELLED}`, `issued_at`, `expires_at (NOT NULL)`,
+  `cancelled_at`, `cancelled_by_application_id`.
+- `ALTER TABLE applications ADD COLUMN renewing_passport_id UUID
+  REFERENCES passports(passport_id)`.
+- Indexes `idx_passports_user_id`, `idx_passports_status`.
+
+### Backend — new `passports` module
+- `PassportsService`:
+  - `createPassport({ userId, sourceApplicationId, bookletNumber, validityYears })`
+    — `expires_at = NOW() + (years || ' years')::interval`.
+  - `getPassportsByUser(userId)` — ordered by `issued_at DESC`.
+  - `cancelPassport(passportId, cancelledByApplicationId)`.
+  - `getExpiringPassports(userId)` — ACTIVE passports expiring within
+    6 months, ordered by `expires_at ASC`.
+- `PassportsController` (all routes behind `JwtAuthGuard`):
+  - `POST   /api/passports`
+  - `GET    /api/passports?userId=`
+  - `GET    /api/passports/expiring?userId=`
+  - `PATCH  /api/passports/:id/cancel`  (body: `{ cancelledByApplicationId }`)
+- Registered in `app.module.ts` and imported into `ApplicationsModule`
+  (no circular dependency — passports doesn't import applications).
+
+### ISSUED endpoint — `POST /api/applications/:id/issue`
+Guarded by `JwtAuthGuard, RolesGuard, @Roles('officer')`. Handler
+`ApplicationsService.issueApplication(applicationId, officerId, bookletNumber)`:
+1. Load `citizen_id`, `validity_id`, `application_type`,
+   `renewing_passport_id`, `current_status`.
+2. Look up `validity_years` from `passport_validity_options`.
+3. Resolve citizen `user_id` via `citizen_profiles`.
+4. `passportsService.createPassport(...)`.
+5. If `application_type='renewal'` and `renewing_passport_id` set,
+   `passportsService.cancelPassport(renewing_passport_id, applicationId)`.
+6. `UPDATE applications SET current_status='Issued',
+   assigned_officer_id=..., completed_at=NOW()`.
+7. `INSERT INTO application_status_history`.
+8. Server-side notification: "Your passport has been issued and will
+   be delivered soon."
+9. LibanPost manifest placeholder — `console.log` with a `// TODO FR-31`.
+Returns `{ application, passport, cancelledPassport }`.
+
+### Frontend
+- `passportService.ts` — gated behind `VITE_USE_MOCK_PASSPORTS`.
+  - `getPassportsByUser`: real-mode hits `GET /api/passports?userId=`
+    and maps via `snakeToCamel`.
+  - `getExpiringPassports`: real-mode hits
+    `GET /api/passports/expiring?userId=`, then applies the existing
+    severity / dismissal / renewal-suppression logic on top.
+  - `createPassport` and `cancelPassport` are no-ops in real mode
+    (server handles both inside `issueApplication`).
+- `officerService.issueApplication`: real-mode POSTs to
+  `/api/applications/:id/issue` with `{ officerId, bookletNumber }`
+  (officerId resolved from `npis_session`); server emits notifications
+  and creates the passport.
+- `frontend/.env.development` → `VITE_USE_MOCK_PASSPORTS=false`.
+
+### Migrations to run (Supabase SQL Editor, in order)
+1. `backend/migrations/003_notifications.sql`
+2. `backend/migrations/004_passports.sql`
+
+### Verified
+- Backend `tsc --noEmit` clean.
+- Frontend `tsc --noEmit` clean.
+- No `.tsx` component files modified this session.
+
+### Open Follow-ups
+- Backend `notifications` rows have no `type` / `title` columns; the
+  frontend maps every message to `STATUS_UPDATE`. If type-coded routing
+  is needed, add columns + map in `NotificationsService.create`.
+- LibanPost manifest is still a `console.log`; real `POST` to LibanPost
+  to be wired alongside FR-31.
+- Expiry-banner renewal-suppression still reads applications from
+  localStorage in `passportService.getExpiringPassports`. In real mode
+  the renewal application lives in Supabase — when that path is moved
+  to `apiClient.get('/applications')` we can drop the localStorage scan.

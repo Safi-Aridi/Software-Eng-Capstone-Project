@@ -75,4 +75,18 @@ export class ApplicationsController {
   cancelOldPassport(@Param('id') id: string, @Body() body: any) {
     return this.applicationsService.cancelOldPassport(id, body);
   }
+
+  @Post(':id/issue')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('officer')
+  issueApplication(
+    @Param('id') id: string,
+    @Body() body: { officerId: string; bookletNumber: string },
+  ) {
+    return this.applicationsService.issueApplication(
+      id,
+      body.officerId,
+      body.bookletNumber,
+    );
+  }
 }
