@@ -18,6 +18,13 @@ const getAuthHeaders = (): HeadersInit => {
   return headers;
 };
 
+const getMultipartHeaders = (): HeadersInit => {
+  const token = localStorage.getItem("npis_token");
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return headers;
+};
+
 const handleUnauthorized = (): void => {
   localStorage.removeItem("npis_token");
   localStorage.removeItem("npis_session");
@@ -65,5 +72,12 @@ export const apiClient = {
       method: "PATCH",
       headers: getAuthHeaders(),
       body: JSON.stringify(body),
+    }).then(parseResponse<T>),
+
+  postForm: <T>(path: string, body: FormData): Promise<T> =>
+    fetch(`${API_BASE_URL}${path}`, {
+      method: "POST",
+      headers: getMultipartHeaders(),
+      body,
     }).then(parseResponse<T>),
 };

@@ -4,3 +4,4 @@ export { notificationService } from "./notificationService";
 export { paymentService } from "./paymentService";
 export { mukhtarService } from "./mukhtarService";
 export { officerService } from "./officerService";
+export { documentService } from "./documentService";

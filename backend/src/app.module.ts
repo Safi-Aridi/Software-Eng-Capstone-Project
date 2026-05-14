@@ -13,6 +13,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { DeliveryModule } from './delivery/delivery.module';
 import { AuditModule } from './audit/audit.module';
 import { PassportsModule } from './passports/passports.module';
+import { DocumentsModule } from './documents/documents.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { PassportsModule } from './passports/passports.module';
     DeliveryModule,
     AuditModule,
     PassportsModule,
+    DocumentsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -6,6 +6,7 @@ import {
   type PassportApplication,
 } from "../services/applicationService";
 import { passportService } from "../services/passportService";
+import { documentService } from "../services/documentService";
 import EnhancedFileUploadField from "../components/upload/EnhancedFileUploadField";
 import BiometricCaptureWidget from "../components/BiometricCaptureWidget";
 
@@ -86,6 +87,7 @@ const NewPassportApplicationPage = () => {
   const [feeAcknowledged, setFeeAcknowledged] = useState(false);
   const [stepErrors, setStepErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
   if (!currentUser || currentUser.role !== "citizen") {
     navigate("/");
@@ -176,50 +178,62 @@ const NewPassportApplicationPage = () => {
 
   const handleSubmit = async () => {
     setIsSubmitting(true);
-    const trackingNumber = applicationService.generateTrackingNumber();
-    const applicationId = "app_" + Date.now();
+    setSubmitError("");
 
-    // Resolve fromExpiry (the applicationId that produced the passport being renewed)
-    // to the corresponding passportId, so the expiry banner can be suppressed while
-    // this renewal is active. Non-blocking — old seeded data without passport
-    // records yields null. Renewals started without the banner stay null too;
-    // banner suppression won't apply for those (acceptable v1 limitation).
-    let renewingPassportId: string | null = null;
-    const fromExpiry = searchParams.get("fromExpiry");
-    if (applicationType === "RENEWAL" && fromExpiry) {
-      const passports = await passportService.getPassportsByUser(
+    try {
+      const trackingNumber = applicationService.generateTrackingNumber();
+      const applicationId = "app_" + Date.now();
+
+      // Resolve fromExpiry (the applicationId that produced the passport being renewed)
+      // to the corresponding passportId, so the expiry banner can be suppressed while
+      // this renewal is active. Non-blocking — old seeded data without passport
+      // records yields null. Renewals started without the banner stay null too;
+      // banner suppression won't apply for those (acceptable v1 limitation).
+      let renewingPassportId: string | null = null;
+      const fromExpiry = searchParams.get("fromExpiry");
+      if (applicationType === "RENEWAL" && fromExpiry) {
+        const passports = await passportService.getPassportsByUser(
+          currentUser.user.id,
+        );
+        const match = passports.find((p) => p.sourceApplicationId === fromExpiry);
+        renewingPassportId = match?.passportId ?? null;
+      }
+
+      const application: PassportApplication = {
+        applicationId,
+        userId: currentUser.user.id,
+        applicationType: applicationType!,
+        currentStatus: "PENDING_REVIEW",
+        submissionDate: new Date().toISOString(),
+        trackingNumber,
+        passportValidity: passportValidity!,
+        feeAmount: FEE_MAP[passportValidity!],
+        paymentStatus: "UNPAID",
+        documents: {
+          identityDocument: documents.identityDocument?.name ?? null,
+          passportPhoto: documents.passportPhoto?.name ?? null,
+          oldPassport: documents.oldPassport?.name ?? null,
+        },
+        mukhtarFormData: mukhtarForm,
+        biometricCaptured,
+        renewingPassportId,
+      };
+
+      const created = await applicationService.createApplication(
         currentUser.user.id,
+        application,
       );
-      const match = passports.find((p) => p.sourceApplicationId === fromExpiry);
-      renewingPassportId = match?.passportId ?? null;
+      await documentService.uploadDocuments(created.applicationId, documents);
+      navigate(`/application/pay/${created.applicationId}`);
+    } catch (err) {
+      setSubmitError(
+        err instanceof Error
+          ? err.message
+          : "Application submission failed. Please try again.",
+      );
+    } finally {
+      setIsSubmitting(false);
     }
-
-    const application: PassportApplication = {
-      applicationId,
-      userId: currentUser.user.id,
-      applicationType: applicationType!,
-      currentStatus: "PENDING_REVIEW",
-      submissionDate: new Date().toISOString(),
-      trackingNumber,
-      passportValidity: passportValidity!,
-      feeAmount: FEE_MAP[passportValidity!],
-      paymentStatus: "UNPAID",
-      documents: {
-        identityDocument: documents.identityDocument?.name ?? null,
-        passportPhoto: documents.passportPhoto?.name ?? null,
-        oldPassport: documents.oldPassport?.name ?? null,
-      },
-      mukhtarFormData: mukhtarForm,
-      biometricCaptured,
-      renewingPassportId,
-    };
-
-    const created = await applicationService.createApplication(
-      currentUser.user.id,
-      application,
-    );
-    setIsSubmitting(false);
-    navigate(`/application/pay/${created.applicationId}`);
   };
 
   return (
@@ -304,6 +318,12 @@ const NewPassportApplicationPage = () => {
           )}
 
           {/* Navigation */}
+          {submitError && (
+            <div className="mt-6 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {submitError}
+            </div>
+          )}
+
           <div className="flex justify-between mt-8 pt-4 border-t border-gray-200">
             {step > 1 ? (
               <button

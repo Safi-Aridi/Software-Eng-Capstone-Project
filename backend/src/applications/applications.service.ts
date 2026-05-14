@@ -16,6 +16,8 @@ const DOCUMENT_TYPE_BY_REASON_KEY: Record<keyof ResubmissionReasons, string> = {
   oldPassport: 'old_passport',
 };
 
+type ApplicationDocuments = Partial<Record<keyof ResubmissionReasons, string>>;
+
 @Injectable()
 export class ApplicationsService {
   constructor(
@@ -63,12 +65,26 @@ export class ApplicationsService {
   private readonly applicationSelect = `
     SELECT
       a.*,
+      docs.documents,
       rr.resubmission_reasons,
       mf.form_data AS mukhtar_form_data,
       mf.signed AS mukhtar_signed,
       mf.signed_at AS mukhtar_signed_at,
       mf.electronic_signature AS mukhtar_electronic_signature
     FROM applications a
+    LEFT JOIN LATERAL (
+      SELECT jsonb_object_agg(
+        CASE d.document_type
+          WHEN 'identity_document' THEN 'identityDocument'
+          WHEN 'passport_photo' THEN 'passportPhoto'
+          WHEN 'old_passport' THEN 'oldPassport'
+          ELSE d.document_type
+        END,
+        d.file_url
+      ) FILTER (WHERE d.file_url IS NOT NULL) AS documents
+      FROM documents d
+      WHERE d.application_id = a.application_id
+    ) docs ON true
     LEFT JOIN LATERAL (
       SELECT jsonb_object_agg(
         CASE d.document_type
@@ -139,6 +155,40 @@ export class ApplicationsService {
     );
 
     return created.rows[0].document_id as string;
+  }
+
+  private async upsertDocumentUrls(
+    applicationId: string,
+    documents: unknown,
+  ): Promise<void> {
+    if (!documents || typeof documents !== 'object') return;
+
+    const input = documents as ApplicationDocuments;
+    for (const [frontendKey, fileUrl] of Object.entries(input) as [
+      keyof ApplicationDocuments,
+      string | undefined,
+    ][]) {
+      if (!fileUrl || typeof fileUrl !== 'string') continue;
+      const documentType = DOCUMENT_TYPE_BY_REASON_KEY[frontendKey];
+      if (!documentType) continue;
+
+      const updated = await this.databaseService.query(
+        `UPDATE documents
+         SET file_url = $3
+         WHERE application_id = $1
+           AND document_type = $2
+         RETURNING document_id`,
+        [applicationId, documentType, fileUrl],
+      );
+
+      if (!updated.rowCount) {
+        await this.databaseService.query(
+          `INSERT INTO documents (application_id, document_type, file_url)
+           VALUES ($1, $2, $3)`,
+          [applicationId, documentType, fileUrl],
+        );
+      }
+    }
   }
 
   async findAll(role?: string) {
@@ -230,6 +280,15 @@ export class ApplicationsService {
       );
     } catch (error) {
       console.error('[ERROR] mukhtar_forms insert failed:', error);
+    }
+
+    try {
+      await this.upsertDocumentUrls(newApplicationId, body.documents);
+    } catch (err) {
+      console.error(
+        `[applications.create] document URL insert failed for ${newApplicationId}:`,
+        err,
+      );
     }
 
     // Record biometric capture intent so the ML pipeline can pick it up.
@@ -403,6 +462,8 @@ export class ApplicationsService {
        WHERE application_id = $2`,
       ['Pending', id],
     );
+
+    await this.upsertDocumentUrls(id, body.documents);
 
     await this.databaseService.query(
       `UPDATE resubmission_requests
@@ -649,11 +710,10 @@ export class ApplicationsService {
     const updated = await this.databaseService.query(
       `UPDATE applications
        SET current_status = 'Issued',
-           assigned_officer_id = $1,
            completed_at = NOW()
-       WHERE application_id = $2
+       WHERE application_id = $1
        RETURNING *`,
-      [officerId, applicationId],
+      [applicationId],
     );
 
     // 7. Status history entry

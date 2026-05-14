@@ -131,6 +131,25 @@ const parseMukhtarFormData = (
   };
 };
 
+const parseDocuments = (value: unknown): PassportApplication["documents"] => {
+  if (!value || typeof value !== "object") {
+    return {
+      identityDocument: null,
+      passportPhoto: null,
+      oldPassport: null,
+    };
+  }
+
+  const obj = value as Record<string, unknown>;
+  return {
+    identityDocument:
+      typeof obj.identityDocument === "string" ? obj.identityDocument : null,
+    passportPhoto:
+      typeof obj.passportPhoto === "string" ? obj.passportPhoto : null,
+    oldPassport: typeof obj.oldPassport === "string" ? obj.oldPassport : null,
+  };
+};
+
 export const mapApiApplicationToFrontend = (raw: unknown): PassportApplication => {
   const c = snakeToCamel(raw) as Record<string, unknown>;
   const currentStatus = backendStatusToFrontend(
@@ -153,11 +172,7 @@ export const mapApiApplicationToFrontend = (raw: unknown): PassportApplication =
       c.resubmissionReasons,
       currentStatus,
     ),
-    documents: {
-      identityDocument: null,
-      passportPhoto: null,
-      oldPassport: null,
-    },
+    documents: parseDocuments(c.documents),
     mukhtarFormData: parseMukhtarFormData(c.mukhtarFormData),
     biometricCaptured: false,
   };

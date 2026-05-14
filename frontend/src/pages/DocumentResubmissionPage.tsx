@@ -5,6 +5,7 @@ import {
   applicationService,
   type PassportApplication,
 } from "../services/applicationService";
+import { documentService } from "../services/documentService";
 import EnhancedFileUploadField from "../components/upload/EnhancedFileUploadField";
 
 const ALLOWED_DOC_EXTS = ["pdf", "jpg", "jpeg", "png"];
@@ -102,6 +103,7 @@ const DocumentResubmissionPage = () => {
   });
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
   useEffect(() => {
     if (!currentUser || !applicationId) {
@@ -171,25 +173,35 @@ const DocumentResubmissionPage = () => {
     }
 
     setIsSubmitting(true);
+    setSubmitError("");
 
-    // TODO: Replace with POST /api/applications/:id/resubmit when backend is ready
-    await applicationService.updateApplicationDocuments(
-      currentUser.user.id,
-      app.applicationId,
-      {
-        identityDocument: documents.identityDocument?.name ?? null,
-        passportPhoto: documents.passportPhoto?.name ?? null,
-        oldPassport: documents.oldPassport?.name ?? null,
-      },
-    );
+    try {
+      const uploadedDocuments = await documentService.uploadDocuments(
+        app.applicationId,
+        documents,
+      );
 
-    setIsSubmitting(false);
-    navigate(`/application/status/${app.applicationId}`, {
-      state: {
-        successMessage:
-          "Documents resubmitted successfully. Your application is under review again.",
-      },
-    });
+      await applicationService.updateApplicationDocuments(
+        currentUser.user.id,
+        app.applicationId,
+        uploadedDocuments,
+      );
+
+      navigate(`/application/status/${app.applicationId}`, {
+        state: {
+          successMessage:
+            "Documents resubmitted successfully. Your application is under review again.",
+        },
+      });
+    } catch (err) {
+      setSubmitError(
+        err instanceof Error
+          ? err.message
+          : "Document resubmission failed. Please try again.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -333,6 +345,12 @@ const DocumentResubmissionPage = () => {
           )}
 
           <div className="pt-2 border-t border-gray-100">
+            {submitError && (
+              <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {submitError}
+              </div>
+            )}
+
             <button
               onClick={handleResubmit}
               disabled={isSubmitting}

@@ -1621,3 +1621,83 @@ Returns `{ application, passport, cancelledPassport }`.
   localStorage in `passportService.getExpiringPassports`. In real mode
   the renewal application lives in Supabase — when that path is moved
   to `apiClient.get('/applications')` we can drop the localStorage scan.
+
+---
+
+## Session 20 - Document Upload via Supabase Storage
+
+### Branch
+`feature/backend-integration` (continuing).
+
+### Migration
+`backend/migrations/005_document_storage.sql`:
+- Creates/updates the existing public Supabase Storage bucket `documents`.
+- Allows `application/pdf`, `image/jpeg`, and `image/png`.
+- Sets 10 MB file size limit.
+- Adds a public read policy for files in the bucket.
+
+Required backend env vars:
+```
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<service role key>
+SUPABASE_STORAGE_BUCKET=documents
+```
+`SUPABASE_STORAGE_BUCKET` is optional; it defaults to `documents`.
+
+### Backend
+- Added `DocumentsModule`, `DocumentsController`, `DocumentsService`.
+- Registered `DocumentsModule` in `AppModule`.
+- New guarded endpoint:
+```
+POST /api/documents/upload
+Content-Type: multipart/form-data
+fields:
+  file
+  applicationId
+  documentType: identity_document | passport_photo | old_passport
+```
+- `DocumentsService.uploadDocument()`:
+  1. Validates file presence, document type, and MIME type.
+  2. Uploads the file to Supabase Storage using the service role key.
+  3. Builds a public object URL.
+  4. Updates or inserts the matching `documents` row with `file_url`.
+
+### Application Query Hydration
+`ApplicationsService.applicationSelect` now aggregates rows from
+`documents` into:
+```
+documents: {
+  identityDocument,
+  passportPhoto,
+  oldPassport
+}
+```
+where each value is the stored Supabase public URL.
+
+`mapApiApplicationToFrontend()` now maps that object into
+`PassportApplication.documents`, replacing the previous hard-coded nulls.
+
+### Frontend
+- `apiClient.ts` now has `postForm()` for multipart requests without forcing
+  `Content-Type: application/json`.
+- Added `documentService.ts`:
+  - `uploadDocument(applicationId, field, file)`
+  - `uploadDocuments(applicationId, files)`
+- `NewPassportApplicationPage.tsx` flow:
+  1. Create application first to get the real backend UUID.
+  2. Upload selected files to `/api/documents/upload`.
+  3. Redirect to payment after uploads finish.
+- `DocumentResubmissionPage.tsx` flow:
+  1. Upload replacement files to `/api/documents/upload`.
+  2. Send uploaded URLs to `POST /api/applications/:id/resubmit`.
+  3. Backend resets status to `Pending` and resolves resubmission rows.
+
+### Verified
+- Backend app compile: `tsc -p tsconfig.build.json --noEmit` clean.
+- Frontend compile: `tsc --noEmit` clean.
+
+### Notes
+- The upload UI still shows its existing local progress simulation; the real
+  network upload happens on submit once an application UUID exists.
+- Document Storage uses public URLs for demo simplicity. A production version
+  should switch to private objects plus signed URL generation.
