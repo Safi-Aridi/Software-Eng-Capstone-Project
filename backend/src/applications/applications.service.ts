@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -17,6 +21,12 @@ const DOCUMENT_TYPE_BY_REASON_KEY: Record<keyof ResubmissionReasons, string> = {
 };
 
 type ApplicationDocuments = Partial<Record<keyof ResubmissionReasons, string>>;
+
+export type AuthUser = {
+  id: string;
+  email?: string;
+  role: 'citizen' | 'mukhtar' | 'officer' | 'admin' | string;
+};
 
 @Injectable()
 export class ApplicationsService {
@@ -191,14 +201,76 @@ export class ApplicationsService {
     }
   }
 
-  async findAll(role?: string) {
-    let query = this.applicationSelect;
-    const params: string[] = [];
+  private appendAccessFilter(
+    clauses: string[],
+    params: unknown[],
+    user?: AuthUser,
+  ): void {
+    if (!user || user.role === 'admin') return;
 
-    if (role === 'mukhtar') {
-      query += " WHERE a.current_status = 'Verified'";
-    } else if (role === 'officer') {
-      query += " WHERE a.current_status = 'Mukhtar Signed'";
+    if (user.role === 'citizen') {
+      params.push(user.id);
+      clauses.push(`EXISTS (
+        SELECT 1
+        FROM citizen_profiles cp
+        WHERE cp.citizen_id = a.citizen_id
+          AND cp.user_id = $${params.length}
+      )`);
+      return;
+    }
+
+    if (user.role === 'mukhtar') {
+      clauses.push("a.current_status = 'Verified'");
+      return;
+    }
+
+    if (user.role === 'officer') {
+      clauses.push(
+        "a.current_status IN ('Mukhtar Signed', 'Processed for Issuance', 'Issued')",
+      );
+    }
+  }
+
+  private async assertApplicationAccess(
+    applicationId: string,
+    user?: AuthUser,
+  ): Promise<void> {
+    if (!user || user.role === 'admin') return;
+    if (user.role !== 'citizen') return;
+
+    const result = await this.databaseService.query(
+      `SELECT 1
+       FROM applications a
+       JOIN citizen_profiles cp ON cp.citizen_id = a.citizen_id
+       WHERE a.application_id = $1
+         AND cp.user_id = $2`,
+      [applicationId, user.id],
+    );
+
+    if (!result.rowCount) {
+      throw new ForbiddenException('You do not have access to this application');
+    }
+  }
+
+  async findAll(role?: string, user?: AuthUser) {
+    let query = this.applicationSelect;
+    const params: unknown[] = [];
+    const clauses: string[] = [];
+    const effectiveRole =
+      role && (!user || user.role === role || user.role === 'admin')
+        ? role
+        : undefined;
+
+    if (effectiveRole === 'mukhtar') {
+      clauses.push("a.current_status = 'Verified'");
+    } else if (effectiveRole === 'officer') {
+      clauses.push("a.current_status = 'Mukhtar Signed'");
+    } else {
+      this.appendAccessFilter(clauses, params, user);
+    }
+
+    if (clauses.length > 0) {
+      query += ` WHERE ${clauses.join(' AND ')}`;
     }
 
     query += ' ORDER BY a.created_at DESC';
@@ -207,7 +279,9 @@ export class ApplicationsService {
     return result.rows;
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: AuthUser) {
+    await this.assertApplicationAccess(id, user);
+
     const query = `
       ${this.applicationSelect}
       WHERE a.application_id = $1
@@ -223,8 +297,8 @@ export class ApplicationsService {
     return result.rows[0];
   }
 
-  async getStatus(id: string) {
-    const application = await this.findOne(id);
+  async getStatus(id: string, user?: AuthUser) {
+    const application = await this.findOne(id, user);
 
     return {
       success: true,
@@ -233,7 +307,9 @@ export class ApplicationsService {
     };
   }
 
-  async create(body: any) {
+  async create(body: any, user?: AuthUser) {
+    const citizenId = user?.role === 'citizen' ? user.id : body.citizenId;
+
     const query = `
       INSERT INTO applications (
         citizen_id,
@@ -254,7 +330,7 @@ export class ApplicationsService {
     )}`;
 
     const result = await this.databaseService.query(query, [
-      body.citizenId,
+      citizenId,
       body.serviceTypeId || 1,
       body.validityId || 1,
       body.assignedBranchId || 1,
@@ -314,7 +390,9 @@ export class ApplicationsService {
     };
   }
 
-  async update(id: string, body: any) {
+  async update(id: string, body: any, user?: AuthUser) {
+    await this.assertApplicationAccess(id, user);
+
     const allowedFields: Record<string, string> = {
       currentStatus: 'current_status',
       paymentStatus: 'payment_status',
@@ -445,7 +523,9 @@ export class ApplicationsService {
     };
   }
 
-  async resubmitDocuments(id: string, body: any) {
+  async resubmitDocuments(id: string, body: any, user?: AuthUser) {
+    await this.assertApplicationAccess(id, user);
+
     const prior = await this.databaseService.query(
       'SELECT current_status FROM applications WHERE application_id = $1',
       [id],

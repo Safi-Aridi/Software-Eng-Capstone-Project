@@ -214,6 +214,28 @@ const ApprovalDetailModal = ({
             </div>
           </section>
 
+          <section>
+            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+              Submitted Documents
+            </h3>
+            <div className="space-y-2">
+              <DocumentLink
+                label="Identity Document"
+                url={app.documents.identityDocument}
+              />
+              <DocumentLink
+                label="Passport Photo"
+                url={app.documents.passportPhoto}
+              />
+              {app.applicationType === "RENEWAL" && (
+                <DocumentLink
+                  label="Old Passport Scan"
+                  url={app.documents.oldPassport}
+                />
+              )}
+            </div>
+          </section>
+
           {signature && (
             <section>
               <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
@@ -284,6 +306,46 @@ const Field = ({
     </p>
   </div>
 );
+
+const DocumentLink = ({
+  label,
+  url,
+}: {
+  label: string;
+  url: string | null;
+}) => {
+  if (!url) {
+    return (
+      <div className="flex items-center justify-between gap-3 p-3 bg-gray-50 rounded-lg text-sm">
+        <span className="font-medium text-gray-700">{label}</span>
+        <span className="text-xs text-gray-400">Not uploaded</span>
+      </div>
+    );
+  }
+
+  const isUrl = /^https?:\/\//i.test(url);
+  const displayName = isUrl ? url.split("/").pop() || url : url;
+  return (
+    <div className="flex items-center justify-between gap-3 p-3 bg-gray-50 rounded-lg text-sm">
+      <div className="min-w-0">
+        <p className="font-medium text-gray-700">{label}</p>
+        <p className="text-xs text-gray-400 font-mono truncate">
+          {displayName}
+        </p>
+      </div>
+      {isUrl && (
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs font-medium text-purple-600 hover:text-purple-800 shrink-0"
+        >
+          Open
+        </a>
+      )}
+    </div>
+  );
+};
 
 // ─── Approval Confirmation Modal ──────────────────────────────────────────────
 

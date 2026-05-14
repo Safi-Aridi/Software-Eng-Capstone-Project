@@ -1701,3 +1701,78 @@ where each value is the stored Supabase public URL.
   network upload happens on submit once an application UUID exists.
 - Document Storage uses public URLs for demo simplicity. A production version
   should switch to private objects plus signed URL generation.
+
+---
+
+## Session 21 - Real-Mode Cleanup & Access Control
+
+### Branch
+`feature/backend-integration` (continuing).
+
+### Backend Access-Control Changes
+
+#### 1. `/api/applications` now filters server-side
+`ApplicationsController` now passes `request.user` from `JwtAuthGuard` into
+`ApplicationsService.findAll()`.
+
+Filtering rules:
+- `citizen` sees only applications owned through `citizen_profiles.user_id`.
+- `mukhtar` direct application listing is limited to `Verified` applications.
+- `officer` direct application listing is limited to staff-relevant statuses:
+  `Mukhtar Signed`, `Processed for Issuance`, `Issued`.
+- `admin` can list all.
+
+The `role` query is no longer trusted blindly. It is only honored when it
+matches the authenticated user's role, or when the user is `admin`. This
+prevents a citizen from calling `/api/applications?role=officer` to see an
+officer queue.
+
+#### 2. Single-application reads check citizen ownership
+`GET /api/applications/:id` and `GET /api/applications/:id/status` now pass
+`request.user` into the service. Citizen access is checked through
+`citizen_profiles`; a citizen cannot read another citizen's application by UUID.
+
+#### 3. Mutating calls use JWT identity where appropriate
+Controller handlers now prefer the authenticated JWT user over caller-supplied
+IDs:
+- `POST /api/applications` uses `request.user.id` as `citizenId` for citizens.
+- `POST /api/applications/:id/sign` uses `request.user.id` as `mukhtarId`.
+- `POST /api/applications/:id/approve` and `/issue` use `request.user.id` as
+  `officerId`.
+- `POST /api/applications/:id/resubmit` uses `request.user.id` as `citizenId`
+  and verifies ownership.
+
+#### 4. Document upload ownership check
+`POST /api/documents/upload` now passes `request.user` to
+`DocumentsService.uploadDocument()`.
+
+The service verifies that the authenticated citizen owns the target
+`applicationId` before uploading to Supabase Storage or updating
+`documents.file_url`. Admin is allowed; non-citizen staff uploads are rejected
+for now because the current UI only supports citizen document submission.
+
+### Frontend Real-Mode Cleanup
+
+#### 1. Expiry banner renewal suppression no longer reads applications from localStorage
+`passportService.getExpiringPassports()` now uses real
+`GET /api/applications` data when `VITE_USE_MOCK_PASSPORTS=false`. The existing
+suppression rule remains the same:
+- renewal targets the expiring passport,
+- renewal status is active/in-progress,
+- payment status is `Paid`.
+
+#### 2. Staff document visibility improved
+Mukhtar and Officer detail panels now show an `Open` link when a document value
+is a Supabase URL. This makes the Session 20 Storage wiring visible in staff
+review flows instead of rendering only a long URL string.
+
+### Verified
+- Backend app compile: `tsc -p tsconfig.build.json --noEmit` clean.
+- Frontend compile: `tsc --noEmit` clean.
+
+### Notes
+- Mukhtar queue filtering is still status-based (`Verified`). District-based
+  assignment remains a later enhancement once routing data is authoritative.
+- Staff upload is intentionally blocked in `DocumentsService` for now; citizen
+  application submission and citizen resubmission are the supported upload
+  flows.

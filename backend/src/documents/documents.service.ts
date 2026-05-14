@@ -1,9 +1,11 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { AuthUser } from '../applications/applications.service';
 import { DatabaseService } from '../database/database.service';
 
 type UploadFile = {
@@ -107,7 +109,37 @@ export class DocumentsService {
     return inserted.rows[0];
   }
 
-  async uploadDocument(file: UploadFile | undefined, body: any) {
+  private async assertUploadAccess(
+    applicationId: string,
+    user?: AuthUser,
+  ): Promise<void> {
+    if (!user) {
+      throw new ForbiddenException('Authentication is required');
+    }
+    if (user.role === 'admin') return;
+    if (user.role !== 'citizen') {
+      throw new ForbiddenException('Only the applicant can upload documents');
+    }
+
+    const result = await this.databaseService.query(
+      `SELECT 1
+       FROM applications a
+       JOIN citizen_profiles cp ON cp.citizen_id = a.citizen_id
+       WHERE a.application_id = $1
+         AND cp.user_id = $2`,
+      [applicationId, user.id],
+    );
+
+    if (!result.rowCount) {
+      throw new ForbiddenException('You do not have access to this application');
+    }
+  }
+
+  async uploadDocument(
+    file: UploadFile | undefined,
+    body: any,
+    user?: AuthUser,
+  ) {
     if (!file) {
       throw new BadRequestException('A document file is required');
     }
@@ -124,6 +156,8 @@ export class DocumentsService {
     if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
       throw new BadRequestException('Unsupported document file type');
     }
+
+    await this.assertUploadAccess(applicationId, user);
 
     const documentType = this.normalizeDocumentType(requestedDocumentType);
     const { supabaseUrl, serviceRoleKey, bucket } = this.getStorageConfig();

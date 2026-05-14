@@ -4,7 +4,7 @@
 import type { Passport } from "../types/passport";
 import type { PassportApplication } from "./applicationService";
 import { apiClient } from "./apiClient";
-import { snakeToCamel } from "../utils/apiAdapters";
+import { mapApiApplicationToFrontend, snakeToCamel } from "../utils/apiAdapters";
 
 const USE_MOCK = import.meta.env.VITE_USE_MOCK_PASSPORTS === "true";
 
@@ -199,7 +199,12 @@ export const passportService = {
       passports = readPassports(userId);
     }
 
-    const apps: PassportApplication[] = (() => {
+    const apps: PassportApplication[] = await (async () => {
+      if (!USE_MOCK) {
+        const rows = await apiClient.get<unknown[]>("/applications");
+        return rows.map(mapApiApplicationToFrontend);
+      }
+
       const stored = localStorage.getItem(`applications_${userId}`);
       if (!stored) return [];
       try {

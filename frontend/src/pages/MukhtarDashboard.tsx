@@ -111,15 +111,28 @@ const QueueCard = ({
 const DocRow = ({ label, name }: { label: string; name: string | null }) => {
   if (!name) return null;
   const isImage = /\.(jpg|jpeg|png)$/i.test(name);
+  const isUrl = /^https?:\/\//i.test(name);
+  const displayName = isUrl ? name.split("/").pop() || name : name;
   return (
     <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
       <div className="w-10 h-10 rounded bg-gray-200 flex items-center justify-center shrink-0 text-gray-500 text-xs font-bold">
         {isImage ? "IMG" : "PDF"}
       </div>
-      <div>
+      <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-gray-700">{label}</p>
-        <p className="text-xs text-gray-400 font-mono">{name}</p>
+        <p className="text-xs text-gray-400 font-mono truncate">{displayName}</p>
       </div>
+      {isUrl && (
+        <a
+          href={name}
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs font-medium text-blue-600 hover:text-blue-800 shrink-0"
+          onClick={(e) => e.stopPropagation()}
+        >
+          Open
+        </a>
+      )}
     </div>
   );
 };
