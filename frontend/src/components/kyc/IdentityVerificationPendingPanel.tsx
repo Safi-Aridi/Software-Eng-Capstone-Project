@@ -15,7 +15,7 @@ const IdentityVerificationPendingPanel = () => {
   useEffect(() => {
     const savedData = authService.getSavedIdentityData();
     if (savedData) {
-      setIdentityData(savedData);
+      setIdentityData(savedData as unknown as IdentityData);
     }
   }, []);
 

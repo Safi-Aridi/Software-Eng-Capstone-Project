@@ -1,37 +1,63 @@
 import { Injectable } from '@nestjs/common';
+import { DatabaseService } from '../database/database.service';
 
 @Injectable()
 export class NotificationsService {
-  findAll() {
-    return {
-      success: true,
-      message: 'Notifications endpoint reserved and working',
-      notifications: [
-        {
-          id: 'demo-notification-1',
-          title: 'Application Status Update',
-          message: 'Your passport application is currently pending review.',
-          read: false,
-          createdAt: new Date().toISOString(),
-        },
-      ],
-    };
+  constructor(private readonly db: DatabaseService) {}
+
+  async create(
+    userId: string,
+    applicationId: string | null,
+    message: string,
+  ) {
+    const result = await this.db.query(
+      `INSERT INTO notifications (user_id, application_id, message)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [userId, applicationId, message],
+    );
+    return result.rows[0];
   }
 
-  create(body: any) {
-    return {
-      success: true,
-      message: 'Notification creation endpoint reserved and working',
-      receivedData: body,
-    };
+  async getByUser(userId: string) {
+    const result = await this.db.query(
+      `SELECT *
+       FROM notifications
+       WHERE user_id = $1
+       ORDER BY created_at DESC`,
+      [userId],
+    );
+    return result.rows;
   }
 
-  markAsRead(id: string) {
-    return {
-      success: true,
-      message: 'Notification marked as read endpoint reserved and working',
-      notificationId: id,
-      read: true,
-    };
+  async markAsRead(notificationId: string) {
+    const result = await this.db.query(
+      `UPDATE notifications
+       SET is_read = true
+       WHERE notification_id = $1
+       RETURNING *`,
+      [notificationId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async markAllAsRead(userId: string) {
+    await this.db.query(
+      `UPDATE notifications
+       SET is_read = true
+       WHERE user_id = $1`,
+      [userId],
+    );
+    return { success: true };
+  }
+
+  async getUnreadCount(userId: string) {
+    const result = await this.db.query(
+      `SELECT COUNT(*)::int AS count
+       FROM notifications
+       WHERE user_id = $1 AND is_read = false`,
+      [userId],
+    );
+    return { count: result.rows[0]?.count ?? 0 };
   }
 }

@@ -3,8 +3,11 @@ import { useNavigate, useParams } from "react-router-dom";
 import { authService } from "../services/authService";
 import {
   applicationService,
+  inferIdentityDocumentType,
+  type IdentityDocumentType,
   type PassportApplication,
 } from "../services/applicationService";
+import { documentService } from "../services/documentService";
 import EnhancedFileUploadField from "../components/upload/EnhancedFileUploadField";
 
 const ALLOWED_DOC_EXTS = ["pdf", "jpg", "jpeg", "png"];
@@ -16,9 +19,115 @@ const isValidPhoto = (f: File) => ALLOWED_PHOTO_EXTS.includes(getExt(f));
 
 interface DocumentFiles {
   identityDocument: File | null;
+  frontUrl: File | null;
+  backUrl: File | null;
+  civilRegistryExtract: File | null;
   passportPhoto: File | null;
   oldPassport: File | null;
 }
+
+type DocumentField = keyof DocumentFiles;
+
+const ACCEPTANCE_CRITERIA: Record<DocumentField, string[]> = {
+  identityDocument: [
+    "Lebanese National ID Card or Civil Registry Extract",
+    "Issued less than 3 months ago",
+    "QR code on the document is scannable",
+  ],
+  frontUrl: [
+    "Front side of the Lebanese National ID Card",
+    "Image is clear and uncropped",
+    "All printed text is readable",
+  ],
+  backUrl: [
+    "Back side of the Lebanese National ID Card",
+    "Image is clear and uncropped",
+    "All printed text is readable",
+  ],
+  civilRegistryExtract: [
+    "Civil Registry Extract issued less than 3 months ago",
+    "QR code on the document is scannable",
+    "All printed text is readable",
+  ],
+  passportPhoto: [
+    "3.5 × 4.5 cm",
+    "White background",
+    "Face clearly visible with no obstructions",
+  ],
+  oldPassport: [
+    "MRZ at the bottom is fully legible",
+    "Passport not reported lost or stolen",
+  ],
+};
+
+const FieldGuidance = ({
+  field,
+  reason,
+}: {
+  field: DocumentField;
+  reason?: string;
+}) => (
+  <div className="mb-2 space-y-2">
+    {reason ? (
+      <div className="p-3 bg-red-50 border border-red-200 rounded-md">
+        <p className="text-xs font-semibold text-red-800 uppercase tracking-wide mb-1">
+          Reviewer feedback
+        </p>
+        <p className="text-sm text-red-700">{reason}</p>
+      </div>
+    ) : (
+      <div className="p-3 bg-green-50 border border-green-200 rounded-md flex items-start gap-2">
+        <svg
+          className="w-4 h-4 text-green-600 mt-0.5 shrink-0"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M5 13l4 4L19 7"
+          />
+        </svg>
+        <p className="text-sm text-green-800">
+          <span className="font-semibold">Previously accepted.</span> You don't
+          need to re-upload this, but you may if you'd like.
+        </p>
+      </div>
+    )}
+    <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-md">
+      <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-1">
+        Acceptance criteria
+      </p>
+      <ul className="text-xs text-gray-600 space-y-0.5 list-disc pl-4">
+        {ACCEPTANCE_CRITERIA[field].map((c) => (
+          <li key={c}>{c}</li>
+        ))}
+      </ul>
+    </div>
+  </div>
+);
+
+const getIdentityResubmissionFields = (
+  app: PassportApplication,
+): DocumentField[] => {
+  const type: IdentityDocumentType | null =
+    app.identityDocumentType ?? inferIdentityDocumentType(app.documents);
+
+  if (type === "NATIONAL_ID") return ["frontUrl", "backUrl"];
+  if (type === "CIVIL_REGISTRY_EXTRACT") return ["civilRegistryExtract"];
+  return ["identityDocument"];
+};
+
+const IDENTITY_FIELD_LABELS: Record<DocumentField, string> = {
+  identityDocument: "Identity Document",
+  frontUrl: "National ID Front",
+  backUrl: "National ID Back",
+  civilRegistryExtract: "Civil Registry Extract",
+  passportPhoto: "Passport Photo",
+  oldPassport: "Old Passport Scan",
+};
 
 const DocumentResubmissionPage = () => {
   const navigate = useNavigate();
@@ -29,11 +138,15 @@ const DocumentResubmissionPage = () => {
   const [notFound, setNotFound] = useState(false);
   const [documents, setDocuments] = useState<DocumentFiles>({
     identityDocument: null,
+    frontUrl: null,
+    backUrl: null,
+    civilRegistryExtract: null,
     passportPhoto: null,
     oldPassport: null,
   });
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
   useEffect(() => {
     if (!currentUser || !applicationId) {
@@ -88,10 +201,15 @@ const DocumentResubmissionPage = () => {
     setDocuments((prev) => ({ ...prev, [field]: null }));
   };
 
+  const identityFields = getIdentityResubmissionFields(app);
+
   const handleResubmit = async () => {
     const errs: Record<string, string> = {};
-    if (!documents.identityDocument)
-      errs.identityDocument = "Identity document is required.";
+    identityFields.forEach((field) => {
+      if (!documents[field]) {
+        errs[field] = `${IDENTITY_FIELD_LABELS[field]} is required.`;
+      }
+    });
     if (!documents.passportPhoto)
       errs.passportPhoto = "Passport photo is required.";
     if (app.applicationType === "RENEWAL" && !documents.oldPassport)
@@ -103,25 +221,35 @@ const DocumentResubmissionPage = () => {
     }
 
     setIsSubmitting(true);
+    setSubmitError("");
 
-    // TODO: Replace with POST /api/applications/:id/resubmit when backend is ready
-    await applicationService.updateApplicationDocuments(
-      currentUser.user.id,
-      app.applicationId,
-      {
-        identityDocument: documents.identityDocument?.name ?? null,
-        passportPhoto: documents.passportPhoto?.name ?? null,
-        oldPassport: documents.oldPassport?.name ?? null,
-      },
-    );
+    try {
+      const uploadedDocuments = await documentService.uploadDocuments(
+        app.applicationId,
+        documents,
+      );
 
-    setIsSubmitting(false);
-    navigate(`/application/status/${app.applicationId}`, {
-      state: {
-        successMessage:
-          "Documents resubmitted successfully. Your application is under review again.",
-      },
-    });
+      await applicationService.updateApplicationDocuments(
+        currentUser.user.id,
+        app.applicationId,
+        uploadedDocuments,
+      );
+
+      navigate(`/application/status/${app.applicationId}`, {
+        state: {
+          successMessage:
+            "Documents resubmitted successfully. Your application is under review again.",
+        },
+      });
+    } catch (err) {
+      setSubmitError(
+        err instanceof Error
+          ? err.message
+          : "Document resubmission failed. Please try again.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -173,65 +301,113 @@ const DocumentResubmissionPage = () => {
           </span>
         </div>
 
-        {/* Notice */}
-        <div className="mb-6 p-4 bg-orange-50 border border-orange-200 rounded-lg">
-          <p className="text-orange-800 text-sm">
-            Please upload clear, valid documents. Ensure all details are
-            legible. Your application will be re-reviewed after submission.
+        {/* Red alert banner */}
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
+          <svg
+            className="w-5 h-5 text-red-600 mt-0.5 shrink-0"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+            />
+          </svg>
+          <p className="text-red-800 text-sm">
+            <span className="font-semibold">
+              Your documents require corrections.
+            </span>{" "}
+            Please review the issues below and resubmit.
           </p>
         </div>
 
         {/* Upload fields */}
-        <div className="bg-white rounded-lg shadow-md p-6 space-y-5">
+        <div className="bg-white rounded-lg shadow-md p-6 space-y-6">
           <h2 className="text-base font-semibold text-gray-800 mb-1">
             Upload Documents
           </h2>
 
-          <EnhancedFileUploadField
-            id="resubmit-identityDocument"
-            label="Identity Document"
-            accept=".pdf,.jpg,.jpeg,.png"
-            acceptLabel="PDF, JPG, PNG"
-            file={documents.identityDocument}
-            stepError={fieldErrors.identityDocument}
-            required
-            validator={isValidDoc}
-            typeErrorMsg="Only PDF, JPG, and PNG files are accepted."
-            onChange={(f) => handleFileChange("identityDocument", f)}
-            onClear={() => clearFile("identityDocument")}
-          />
+          {identityFields.map((field) => {
+            const imageOnly = field === "frontUrl" || field === "backUrl";
+            return (
+              <div key={field}>
+                <FieldGuidance
+                  field={field}
+                  reason={app.resubmissionReasons?.[field]}
+                />
+                <EnhancedFileUploadField
+                  id={`resubmit-${field}`}
+                  label={IDENTITY_FIELD_LABELS[field]}
+                  accept={imageOnly ? ".jpg,.jpeg,.png" : ".pdf,.jpg,.jpeg,.png"}
+                  acceptLabel={imageOnly ? "JPG, PNG" : "PDF, JPG, PNG"}
+                  file={documents[field]}
+                  stepError={fieldErrors[field]}
+                  required
+                  validator={imageOnly ? isValidPhoto : isValidDoc}
+                  typeErrorMsg={
+                    imageOnly
+                      ? "Only JPG and PNG image files are accepted."
+                      : "Only PDF, JPG, and PNG files are accepted."
+                  }
+                  onChange={(f) => handleFileChange(field, f)}
+                  onClear={() => clearFile(field)}
+                />
+              </div>
+            );
+          })}
 
-          <EnhancedFileUploadField
-            id="resubmit-passportPhoto"
-            label="Passport Photo"
-            accept=".jpg,.jpeg,.png"
-            acceptLabel="JPG, PNG"
-            file={documents.passportPhoto}
-            stepError={fieldErrors.passportPhoto}
-            required
-            validator={isValidPhoto}
-            typeErrorMsg="Only JPG and PNG files are accepted for passport photos."
-            onChange={(f) => handleFileChange("passportPhoto", f)}
-            onClear={() => clearFile("passportPhoto")}
-          />
+          <div>
+            <FieldGuidance
+              field="passportPhoto"
+              reason={app.resubmissionReasons?.passportPhoto}
+            />
+            <EnhancedFileUploadField
+              id="resubmit-passportPhoto"
+              label="Passport Photo"
+              accept=".jpg,.jpeg,.png"
+              acceptLabel="JPG, PNG"
+              file={documents.passportPhoto}
+              stepError={fieldErrors.passportPhoto}
+              required
+              validator={isValidPhoto}
+              typeErrorMsg="Only JPG and PNG files are accepted for passport photos."
+              onChange={(f) => handleFileChange("passportPhoto", f)}
+              onClear={() => clearFile("passportPhoto")}
+            />
+          </div>
 
           {app.applicationType === "RENEWAL" && (
-            <EnhancedFileUploadField
-              id="resubmit-oldPassport"
-              label="Old Passport Scan"
-              accept=".pdf,.jpg,.jpeg,.png"
-              acceptLabel="PDF, JPG, PNG"
-              file={documents.oldPassport}
-              stepError={fieldErrors.oldPassport}
-              required
-              validator={isValidDoc}
-              typeErrorMsg="Only PDF, JPG, and PNG files are accepted."
-              onChange={(f) => handleFileChange("oldPassport", f)}
-              onClear={() => clearFile("oldPassport")}
-            />
+            <div>
+              <FieldGuidance
+                field="oldPassport"
+                reason={app.resubmissionReasons?.oldPassport}
+              />
+              <EnhancedFileUploadField
+                id="resubmit-oldPassport"
+                label="Old Passport Scan"
+                accept=".pdf,.jpg,.jpeg,.png"
+                acceptLabel="PDF, JPG, PNG"
+                file={documents.oldPassport}
+                stepError={fieldErrors.oldPassport}
+                required
+                validator={isValidDoc}
+                typeErrorMsg="Only PDF, JPG, and PNG files are accepted."
+                onChange={(f) => handleFileChange("oldPassport", f)}
+                onClear={() => clearFile("oldPassport")}
+              />
+            </div>
           )}
 
           <div className="pt-2 border-t border-gray-100">
+            {submitError && (
+              <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {submitError}
+              </div>
+            )}
+
             <button
               onClick={handleResubmit}
               disabled={isSubmitting}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { authService } from "../services/authService";
 import {
@@ -6,25 +6,36 @@ import {
   type PassportApplication,
   type ApplicationStatus,
 } from "../services/applicationService";
+import {
+  passportService,
+  type ExpiringPassport,
+} from "../services/passportService";
+import { paymentService } from "../services/paymentService";
+import { receiptService } from "../services/receiptService";
 import AccountLockedPanel from "../components/kyc/AccountLockedPanel";
 import IdentityVerificationPendingPanel from "../components/kyc/IdentityVerificationPendingPanel";
 import IdentityVerificationRejectedPanel from "../components/kyc/IdentityVerificationRejectedPanel";
+import NotificationCenter from "../components/NotificationCenter";
 
 const CitizenDashboard = () => {
   const navigate = useNavigate();
   const currentUser = authService.getCurrentUser();
+  // getCurrentUser() returns a fresh object each call, so depend on stable primitives
+  // (id + role) to prevent the effect from re-firing on every render.
+  const userId = currentUser?.user.id;
+  const userRole = currentUser?.role;
 
   useEffect(() => {
-    if (!currentUser) {
+    if (!userId) {
       navigate("/");
       return;
     }
-    if (currentUser.role !== "citizen") {
+    if (userRole !== "citizen") {
       authService.logout();
       navigate("/");
       return;
     }
-  }, [currentUser, navigate]);
+  }, [userId, userRole, navigate]);
 
   if (!currentUser) return null;
 
@@ -98,6 +109,7 @@ const STATUS_STYLES: Record<ApplicationStatus, string> = {
   VERIFIED: "bg-green-100 text-green-800",
   MUKHTAR_SIGNED: "bg-blue-100 text-blue-800",
   PROCESSED: "bg-green-100 text-green-800",
+  ISSUED: "bg-emerald-100 text-emerald-800",
   RESUBMISSION_REQUIRED: "bg-red-100 text-red-800",
   DELIVERED: "bg-green-100 text-green-800",
 };
@@ -106,7 +118,8 @@ const STATUS_LABELS: Record<ApplicationStatus, string> = {
   PENDING_REVIEW: "Pending Review",
   VERIFIED: "Verified",
   MUKHTAR_SIGNED: "Mukhtar Signed",
-  PROCESSED: "Processed",
+  PROCESSED: "Approved for Printing",
+  ISSUED: "Passport Issued",
   RESUBMISSION_REQUIRED: "Resubmission Required",
   DELIVERED: "Delivered",
 };
@@ -121,36 +134,109 @@ const StatusBadge = ({ status }: { status: ApplicationStatus }) => (
 
 // ─── Application Card ─────────────────────────────────────────────────────────
 
-const ApplicationCard = ({ app }: { app: PassportApplication }) => {
+const ApplicationCard = ({
+  app,
+  onReceiptError,
+}: {
+  app: PassportApplication;
+  onReceiptError: (msg: string) => void;
+}) => {
   const navigate = useNavigate();
+  const isUnpaid = app.paymentStatus === "UNPAID";
+  const isPaymentFailed = app.paymentStatus === "Failed";
+  const isPaid = app.paymentStatus === "Paid";
+  const [isGeneratingReceipt, setIsGeneratingReceipt] = useState(false);
+
+  const handleDownloadReceipt = async () => {
+    setIsGeneratingReceipt(true);
+    try {
+      await receiptService.generateReceipt(app.applicationId);
+    } catch {
+      onReceiptError("Receipt generation failed. Please try again.");
+    } finally {
+      setIsGeneratingReceipt(false);
+    }
+  };
+
   return (
-    <div className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors">
-      <div className="flex justify-between items-start gap-4">
-        <div className="min-w-0">
-          <h3 className="font-semibold text-gray-800">
-            {app.applicationType === "NEW" ? "New Passport" : "Passport Renewal"}
-          </h3>
-          <p className="text-sm text-gray-500 mt-1">
-            Tracking:{" "}
-            <span className="font-mono text-gray-700">{app.trackingNumber}</span>
-          </p>
-          <p className="text-sm text-gray-500">
-            Submitted:{" "}
-            {new Date(app.submissionDate).toLocaleDateString("en-GB", {
-              day: "numeric",
-              month: "long",
-              year: "numeric",
-            })}
-          </p>
-        </div>
-        <div className="flex flex-col items-end gap-2 shrink-0">
-          <StatusBadge status={app.currentStatus} />
+    <div
+      className={`border rounded-lg overflow-hidden transition-colors ${
+        isUnpaid
+          ? "border-yellow-300"
+          : isPaymentFailed
+            ? "border-red-300"
+            : "border-gray-200 hover:bg-gray-50"
+      }`}
+    >
+      {isUnpaid && (
+        <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-2 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4 text-yellow-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="text-yellow-800 text-xs font-medium">Payment Pending</span>
+          </div>
           <button
-            onClick={() => navigate(`/application/status/${app.applicationId}`)}
-            className="text-xs text-blue-600 hover:text-blue-800 font-medium hover:underline"
+            onClick={() => navigate(`/application/pay/${app.applicationId}`)}
+            className="text-xs bg-yellow-600 text-white px-3 py-1 rounded-full hover:bg-yellow-700 transition-colors font-medium"
           >
-            Track Application
+            Complete Payment
           </button>
+        </div>
+      )}
+      {isPaymentFailed && (
+        <div className="bg-red-50 border-b border-red-200 px-4 py-2 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4 text-red-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            <span className="text-red-800 text-xs font-medium">Payment Failed</span>
+          </div>
+          <button
+            onClick={() => navigate(`/application/pay/${app.applicationId}`)}
+            className="text-xs bg-red-600 text-white px-3 py-1 rounded-full hover:bg-red-700 transition-colors font-medium"
+          >
+            Retry Payment
+          </button>
+        </div>
+      )}
+      <div className="p-4">
+        <div className="flex justify-between items-start gap-4">
+          <div className="min-w-0">
+            <h3 className="font-semibold text-gray-800">
+              {app.applicationType === "NEW" ? "New Passport" : "Passport Renewal"}
+            </h3>
+            <p className="text-sm text-gray-500 mt-1">
+              Tracking:{" "}
+              <span className="font-mono text-gray-700">{app.trackingNumber}</span>
+            </p>
+            <p className="text-sm text-gray-500">
+              Submitted:{" "}
+              {new Date(app.submissionDate).toLocaleDateString("en-GB", {
+                day: "numeric",
+                month: "long",
+                year: "numeric",
+              })}
+            </p>
+          </div>
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            <StatusBadge status={app.currentStatus} />
+            <button
+              onClick={() => navigate(`/application/status/${app.applicationId}`)}
+              className="text-xs text-blue-600 hover:text-blue-800 font-medium hover:underline"
+            >
+              Track Application
+            </button>
+            {isPaid && (
+              <button
+                onClick={handleDownloadReceipt}
+                disabled={isGeneratingReceipt}
+                className="text-xs text-gray-500 hover:text-gray-700 hover:underline disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isGeneratingReceipt ? "Generating..." : "Download Receipt"}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -168,20 +254,56 @@ const AcceptedDashboard = () => {
     (identityData?.fullName as string | undefined) ||
     currentUser?.user?.fullName ||
     "Citizen";
+  // Stable primitive — getCurrentUser() returns a fresh object reference each call,
+  // so depending on it directly causes an infinite re-render loop.
+  const userId = currentUser?.user.id;
 
   // TODO: Replace localStorage read with GET /api/applications?role=citizen when backend is ready
   const [applications, setApplications] = useState<PassportApplication[]>([]);
+  const [expiringPassports, setExpiringPassports] = useState<ExpiringPassport[]>([]);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<"ALL" | ApplicationStatus>(
+    "ALL",
+  );
+  const [sortOrder, setSortOrder] = useState<"NEWEST" | "OLDEST">("NEWEST");
   const [successMessage, setSuccessMessage] = useState<string | null>(
     (location.state as { successMessage?: string } | null)?.successMessage ?? null,
   );
 
+  const visibleApplications = useMemo(() => {
+    const filtered =
+      statusFilter === "ALL"
+        ? applications
+        : applications.filter((a) => a.currentStatus === statusFilter);
+    return [...filtered].sort((a, b) => {
+      const da = new Date(a.submissionDate).getTime();
+      const db = new Date(b.submissionDate).getTime();
+      return sortOrder === "NEWEST" ? db - da : da - db;
+    });
+  }, [applications, statusFilter, sortOrder]);
+
   useEffect(() => {
-    if (currentUser) {
-      applicationService
-        .getApplications(currentUser.user.id)
-        .then(setApplications);
-    }
-  }, [currentUser]);
+    if (!userId) return;
+    // FR-30: auto-fail UNPAID applications older than 15 minutes
+    paymentService
+      .checkExpiredPayments(userId)
+      .then(() =>
+        applicationService.getApplications(userId).then(setApplications),
+      );
+    passportService.getExpiringPassports(userId).then(setExpiringPassports);
+  }, [userId]);
+
+  const handleReceiptError = (msg: string) => {
+    setReceiptError(msg);
+    setTimeout(() => setReceiptError(null), 3000);
+  };
+
+  const handleDismissExpiry = async (passportId: string) => {
+    await passportService.dismissExpiryBanner(passportId, "info");
+    setExpiringPassports((prev) =>
+      prev.filter((e) => e.passport.passportId !== passportId),
+    );
+  };
 
   const handleLogout = () => {
     authService.logout();
@@ -190,6 +312,25 @@ const AcceptedDashboard = () => {
 
   return (
     <div className="max-w-4xl mx-auto p-6">
+      {expiringPassports.map((e) => (
+        <ExpiryBanner
+          key={e.passport.passportId}
+          entry={e}
+          onDismiss={() => handleDismissExpiry(e.passport.passportId)}
+          onRenew={() =>
+            navigate(
+              `/application/checklist?type=RENEWAL&fromExpiry=${e.passport.sourceApplicationId}`,
+            )
+          }
+        />
+      ))}
+
+      {receiptError && (
+        <div className="mb-5 p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">
+          {receiptError}
+        </div>
+      )}
+
       {successMessage && (
         <div className="mb-5 p-4 bg-green-50 border border-green-200 rounded-lg flex justify-between items-start">
           <div className="flex items-start">
@@ -219,12 +360,35 @@ const AcceptedDashboard = () => {
                 passport.
               </p>
             </div>
-            <button
-              onClick={handleLogout}
-              className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 transition-colors"
-            >
-              Logout
-            </button>
+            <div className="flex items-center gap-2">
+              {userId && <NotificationCenter userId={userId} />}
+              <button
+                onClick={() => navigate("/citizen/profile")}
+                aria-label="Profile"
+                className="flex items-center gap-1.5 text-sm text-gray-700 hover:text-gray-900 hover:bg-gray-100 px-3 py-2 rounded-md transition-colors"
+              >
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                  />
+                </svg>
+                Profile
+              </button>
+              <button
+                onClick={handleLogout}
+                className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 transition-colors"
+              >
+                Logout
+              </button>
+            </div>
           </div>
         </div>
 
@@ -260,14 +424,14 @@ const AcceptedDashboard = () => {
               My Applications
             </h2>
             <button
-              onClick={() => navigate("/application/new")}
+              onClick={() => navigate("/application/checklist")}
               className="bg-blue-600 text-white px-5 py-2 rounded-md hover:bg-blue-700 transition-colors text-sm font-medium"
             >
               Apply for Passport
             </button>
           </div>
 
-          {/* Application list or empty state */}
+          {/* Application list, toolbar, or empty state */}
           {applications.length === 0 ? (
             <div className="text-center py-10 bg-gray-50 rounded-lg">
               <svg
@@ -292,13 +456,168 @@ const AcceptedDashboard = () => {
               </p>
             </div>
           ) : (
-            <div className="space-y-3">
-              {applications.map((app) => (
-                <ApplicationCard key={app.applicationId} app={app} />
-              ))}
-            </div>
+            <>
+              <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="text-xs font-medium text-gray-600">
+                    Status
+                    <select
+                      value={statusFilter}
+                      onChange={(e) =>
+                        setStatusFilter(
+                          e.target.value as "ALL" | ApplicationStatus,
+                        )
+                      }
+                      className="ml-2 text-xs bg-white border border-gray-300 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="ALL">All Statuses</option>
+                      {(Object.keys(STATUS_LABELS) as ApplicationStatus[]).map(
+                        (s) => (
+                          <option key={s} value={s}>
+                            {STATUS_LABELS[s]}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </label>
+                  <label className="text-xs font-medium text-gray-600">
+                    Sort
+                    <select
+                      value={sortOrder}
+                      onChange={(e) =>
+                        setSortOrder(e.target.value as "NEWEST" | "OLDEST")
+                      }
+                      className="ml-2 text-xs bg-white border border-gray-300 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="NEWEST">Newest First</option>
+                      <option value="OLDEST">Oldest First</option>
+                    </select>
+                  </label>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Showing {visibleApplications.length} of {applications.length}{" "}
+                  application{applications.length === 1 ? "" : "s"}
+                </p>
+              </div>
+
+              {visibleApplications.length === 0 ? (
+                <div className="text-center py-10 bg-gray-50 rounded-lg">
+                  <p className="text-gray-600 font-medium">
+                    No applications match this filter.
+                  </p>
+                  <button
+                    onClick={() => setStatusFilter("ALL")}
+                    className="text-sm text-blue-600 hover:text-blue-800 hover:underline font-medium mt-2"
+                  >
+                    Clear filter
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {visibleApplications.map((app) => (
+                    <ApplicationCard
+                      key={app.applicationId}
+                      app={app}
+                      onReceiptError={handleReceiptError}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Expiry Reminder Banner ───────────────────────────────────────────────────
+
+const SEVERITY_STYLES = {
+  info: {
+    container: "bg-blue-50 border-blue-200 text-blue-900",
+    button: "bg-blue-600 hover:bg-blue-700 text-white",
+    label: "Info",
+  },
+  warning: {
+    container: "bg-amber-50 border-amber-300 text-amber-900",
+    button: "bg-amber-600 hover:bg-amber-700 text-white",
+    label: "Warning",
+  },
+  critical: {
+    container: "bg-red-50 border-red-300 text-red-900",
+    button: "bg-red-600 hover:bg-red-700 text-white",
+    label: "Critical",
+  },
+  expired: {
+    container: "bg-red-50 border-red-300 text-red-900",
+    button: "bg-red-600 hover:bg-red-700 text-white",
+    label: "Expired",
+  },
+} as const;
+
+const formatExpiryDate = (iso: string): string =>
+  new Date(iso).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+
+const buildExpiryMessage = (entry: ExpiringPassport): string => {
+  const { severity, daysUntilExpiry, expiryDate } = entry;
+  const dateStr = formatExpiryDate(expiryDate);
+  if (severity === "expired") {
+    return `Your passport expired on ${dateStr}. Renew immediately.`;
+  }
+  if (severity === "critical") {
+    return `Your passport expires in ${daysUntilExpiry} day${daysUntilExpiry === 1 ? "" : "s"} on ${dateStr}. Renew immediately.`;
+  }
+  if (severity === "warning") {
+    const months = Math.max(1, Math.round(daysUntilExpiry / 30));
+    return `Your passport expires in ${months} month${months === 1 ? "" : "s"} on ${dateStr}. Renew now to avoid travel disruption.`;
+  }
+  // info
+  const months = Math.max(1, Math.round(daysUntilExpiry / 30));
+  return `Your passport expires in ${months} months. Plan to renew soon.`;
+};
+
+const ExpiryBanner = ({
+  entry,
+  onDismiss,
+  onRenew,
+}: {
+  entry: ExpiringPassport;
+  onDismiss: () => void;
+  onRenew: () => void;
+}) => {
+  const styles = SEVERITY_STYLES[entry.severity];
+  const dismissible = entry.severity === "info";
+  return (
+    <div
+      className={`mb-3 p-4 border rounded-lg flex items-start justify-between gap-4 ${styles.container}`}
+    >
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium">{buildExpiryMessage(entry)}</p>
+        <p className="text-xs opacity-75 mt-1 font-mono">
+          {entry.passport.bookletNumber}
+        </p>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <button
+          onClick={onRenew}
+          className={`text-xs px-4 py-2 rounded-md font-medium transition-colors ${styles.button}`}
+        >
+          Renew Now
+        </button>
+        {dismissible && (
+          <button
+            onClick={onDismiss}
+            aria-label="Dismiss"
+            className="text-xl leading-none opacity-60 hover:opacity-100 px-1"
+          >
+            ×
+          </button>
+        )}
       </div>
     </div>
   );
