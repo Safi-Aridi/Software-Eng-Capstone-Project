@@ -2,7 +2,10 @@ import { useEffect, useState, useCallback, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { authService } from "../services/authService";
 import { mukhtarService } from "../services/mukhtarService";
-import type { EnrichedApplication } from "../services/applicationService";
+import {
+  inferIdentityDocumentType,
+  type EnrichedApplication,
+} from "../services/applicationService";
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 
@@ -212,23 +215,43 @@ const ConfirmSignModal = ({
 
 // ─── Resubmission Form Modal ──────────────────────────────────────────────────
 
-type ResubmissionDocKey = "identityDocument" | "passportPhoto" | "oldPassport";
+type ResubmissionDocKey =
+  | "identityDocument"
+  | "frontUrl"
+  | "backUrl"
+  | "civilRegistryExtract"
+  | "passportPhoto"
+  | "oldPassport";
 
 const RESUBMISSION_DOC_LABELS: Record<ResubmissionDocKey, string> = {
   identityDocument: "Identity Document",
+  frontUrl: "National ID Front",
+  backUrl: "National ID Back",
+  civilRegistryExtract: "Civil Registry Extract",
   passportPhoto: "Passport Photo",
   oldPassport: "Old Passport",
+};
+
+const getIdentityDocKeys = (
+  app: EnrichedApplication["app"],
+): ResubmissionDocKey[] => {
+  const type = app.identityDocumentType ?? inferIdentityDocumentType(app.documents);
+  if (type === "NATIONAL_ID") return ["frontUrl", "backUrl"];
+  if (type === "CIVIL_REGISTRY_EXTRACT") return ["civilRegistryExtract"];
+  return ["identityDocument"];
 };
 
 const ResubmissionFormModal = ({
   trackingNumber,
   isRenewal,
+  identityDocKeys,
   onSubmit,
   onCancel,
   isProcessing,
 }: {
   trackingNumber: string;
   isRenewal: boolean;
+  identityDocKeys: ResubmissionDocKey[];
   onSubmit: (reasons: Partial<Record<ResubmissionDocKey, string>>) => void;
   onCancel: () => void;
   isProcessing: boolean;
@@ -236,19 +259,25 @@ const ResubmissionFormModal = ({
   const [selected, setSelected] = useState<Record<ResubmissionDocKey, boolean>>(
     {
       identityDocument: false,
+      frontUrl: false,
+      backUrl: false,
+      civilRegistryExtract: false,
       passportPhoto: false,
       oldPassport: false,
     },
   );
   const [reasons, setReasons] = useState<Record<ResubmissionDocKey, string>>({
     identityDocument: "",
+    frontUrl: "",
+    backUrl: "",
+    civilRegistryExtract: "",
     passportPhoto: "",
     oldPassport: "",
   });
 
   const docKeys: ResubmissionDocKey[] = isRenewal
-    ? ["identityDocument", "passportPhoto", "oldPassport"]
-    : ["identityDocument", "passportPhoto"];
+    ? [...identityDocKeys, "passportPhoto", "oldPassport"]
+    : [...identityDocKeys, "passportPhoto"];
 
   const canSubmit = docKeys.some(
     (k) => selected[k] && reasons[k].trim().length > 0,
@@ -461,10 +490,13 @@ const DetailModal = ({
               Submitted Documents
             </h3>
             <div className="space-y-2">
-              <DocRow
-                label="Identity Document"
-                name={app.documents.identityDocument}
-              />
+              {getIdentityDocKeys(app).map((key) => (
+                <DocRow
+                  key={key}
+                  label={RESUBMISSION_DOC_LABELS[key]}
+                  name={app.documents[key] ?? null}
+                />
+              ))}
               <DocRow
                 label="Passport Photo"
                 name={app.documents.passportPhoto}
@@ -750,6 +782,7 @@ const MukhtarDashboard = () => {
         <ResubmissionFormModal
           trackingNumber={selectedItem.app.trackingNumber}
           isRenewal={selectedItem.app.applicationType === "RENEWAL"}
+          identityDocKeys={getIdentityDocKeys(selectedItem.app)}
           onSubmit={handleReject}
           onCancel={() => setConfirmAction(null)}
           isProcessing={isProcessing}

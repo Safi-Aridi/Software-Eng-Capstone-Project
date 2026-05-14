@@ -10,12 +10,18 @@ import { PassportsService } from '../passports/passports.service';
 
 type ResubmissionReasons = Partial<{
   identityDocument: string;
+  frontUrl: string;
+  backUrl: string;
+  civilRegistryExtract: string;
   passportPhoto: string;
   oldPassport: string;
 }>;
 
 const DOCUMENT_TYPE_BY_REASON_KEY: Record<keyof ResubmissionReasons, string> = {
   identityDocument: 'identity_document',
+  frontUrl: 'national_id_front',
+  backUrl: 'national_id_back',
+  civilRegistryExtract: 'civil_registry_extract',
   passportPhoto: 'passport_photo',
   oldPassport: 'old_passport',
 };
@@ -86,6 +92,9 @@ export class ApplicationsService {
       SELECT jsonb_object_agg(
         CASE d.document_type
           WHEN 'identity_document' THEN 'identityDocument'
+          WHEN 'national_id_front' THEN 'frontUrl'
+          WHEN 'national_id_back' THEN 'backUrl'
+          WHEN 'civil_registry_extract' THEN 'civilRegistryExtract'
           WHEN 'passport_photo' THEN 'passportPhoto'
           WHEN 'old_passport' THEN 'oldPassport'
           ELSE d.document_type
@@ -99,6 +108,9 @@ export class ApplicationsService {
       SELECT jsonb_object_agg(
         CASE d.document_type
           WHEN 'identity_document' THEN 'identityDocument'
+          WHEN 'national_id_front' THEN 'frontUrl'
+          WHEN 'national_id_back' THEN 'backUrl'
+          WHEN 'civil_registry_extract' THEN 'civilRegistryExtract'
           WHEN 'passport_photo' THEN 'passportPhoto'
           WHEN 'old_passport' THEN 'oldPassport'
           ELSE d.document_type
@@ -118,15 +130,20 @@ export class ApplicationsService {
     const input = reasons as Record<string, unknown>;
     const out: ResubmissionReasons = {};
 
-    if (typeof input.identityDocument === 'string') {
-      out.identityDocument = input.identityDocument.trim();
-    }
-    if (typeof input.passportPhoto === 'string') {
-      out.passportPhoto = input.passportPhoto.trim();
-    }
-    if (typeof input.oldPassport === 'string') {
-      out.oldPassport = input.oldPassport.trim();
-    }
+    (
+      [
+        'identityDocument',
+        'frontUrl',
+        'backUrl',
+        'civilRegistryExtract',
+        'passportPhoto',
+        'oldPassport',
+      ] as const
+    ).forEach((key) => {
+      if (typeof input[key] === 'string') {
+        out[key] = input[key].trim();
+      }
+    });
 
     return Object.fromEntries(
       Object.entries(out).filter(
@@ -834,5 +851,20 @@ export class ApplicationsService {
       passport: createdPassport,
       cancelledPassport,
     };
+  }
+
+  async updateBiometricFrameUrls(
+    applicationId: string,
+    frameUrls: string[],
+  ): Promise<{ success: true }> {
+    await this.databaseService.query(
+      `INSERT INTO biometric_data
+         (application_id, face_frame_urls, verification_status)
+       VALUES ($1, $2::jsonb, 'Pending')
+       ON CONFLICT (application_id) DO UPDATE
+       SET face_frame_urls = EXCLUDED.face_frame_urls`,
+      [applicationId, JSON.stringify(frameUrls)],
+    );
+    return { success: true };
   }
 }

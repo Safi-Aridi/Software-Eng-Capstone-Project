@@ -1776,3 +1776,233 @@ review flows instead of rendering only a long URL string.
 - Staff upload is intentionally blocked in `DocumentsService` for now; citizen
   application submission and citizen resubmission are the supported upload
   flows.
+---
+
+## Session 22 — MediaPipe face capture & Supabase frame upload (FR-07, FR-07.1, FR-07.2)
+
+### Goal
+Replace the simulated `BiometricCaptureWidget` with real MediaPipe face
+detection, then capture live JPG frames at three head positions and upload
+them to Supabase Storage. Backend persists the resulting object paths to
+`biometric_data.face_frame_urls` for the ML pipeline to consume.
+
+### Stack additions
+- `frontend`: `@mediapipe/tasks-vision` (face landmarker + blendshapes + facial
+  transformation matrices, GPU delegate w/ CPU fallback).
+- `backend`: `@supabase/supabase-js` (used only to mint signed upload URLs;
+  database access remains on the raw `pg` pool).
+
+### Detection pipeline (Table 4 coverage)
+Implemented in `analyzeFaceResults()` inside `BiometricCaptureWidget.tsx`.
+First failing condition wins; priority order:
+
+| # | Table 4 row | MediaPipe signal |
+|---|---|---|
+| 1 | Out of frame | `faceLandmarks.length === 0` |
+| 2 | Multiple faces | `faceLandmarks.length > 1` |
+| 3 | Face too far / off-center | landmark bbox width < 0.2 or bbox centre outside [0.25, 0.75] × [0.2, 0.85] |
+| 4 | Poor lighting | mean RGB of face bbox sampled via hidden canvas < 60 |
+| 5 | Eyewear (approximation) | `eyeBlinkLeft` and `eyeBlinkRight` blendshapes both > 0.4 (weak proxy — see caveats) |
+| 6 | Pitch / roll | abs(pitch) > 15° or abs(roll) > 15° from `facialTransformationMatrixes[0].data` |
+| 7 | Mouth open | `jawOpen` blendshape > 0.3 |
+| 8 | Liveness — turn right then left | yaw state machine: `waiting_right → turned_right → waiting_left → done` (yaw < -20 → > -5 → > 20) |
+| 9 | Yaw after liveness | abs(yaw) > 15° |
+| ✓ | All clear | "Perfect. Hold still for three seconds." |
+
+Once condition 1-7 pass and liveness completes, the existing 3-second
+stability timer fills the SVG arc; on completion the widget advances to the
+**capture phase**.
+
+### Capture phase (3 positions × 3 frames = 9 JPGs)
+After liveness, three positions are walked sequentially:
+- `center` — yaw between -10° and 10°
+- `right` — yaw < -15°
+- `left` — yaw > 15°
+
+For each position:
+1. Show waiting instruction until yaw enters the required range and stays
+   there for ≥ 600 ms.
+2. Visible 5-second capture timer (separate from the liveness 3-second
+   timer — they share the same SVG arc but never run simultaneously).
+3. `captureAndUploadFrames(applicationId, position, video, canvas, 3)`
+   from `biometricUploadService.ts` runs:
+   - For each `n ∈ {1, 2, 3}`: draw `<video>` frame onto the hidden
+     `<canvas>`, `toBlob('image/jpeg', 0.9)`, request a signed upload URL
+     from the backend, PUT the blob to Supabase Storage, then
+     `setTimeout(1600)` before the next frame.
+4. Brief "Position captured ✓" splash, then advance.
+
+After all three positions complete:
+- `saveBiometricFrameUrls(applicationId, allPaths)` → PATCH
+  `/api/applications/:id/biometric-frames` with the 9 storage paths.
+- `onCaptureComplete({ faceCaptured: true, fingerprintsCaptured: true })`
+  fires (the second flag is kept for parent-component compatibility — the
+  fingerprint stage was removed in Session 19).
+
+The "Skip (Dev Only)" button in `NewPassportApplicationPage.tsx` still
+calls `onBiometricCapture` directly without any uploads.
+
+### Storage layout
+- Bucket: `biometrics` (override via `SUPABASE_BIOMETRICS_BUCKET`).
+- Object path: `<application_id>/face_<position>_<n>.jpg`
+  e.g. `b7d3.../face_center_1.jpg`, `…/face_right_2.jpg`, `…/face_left_3.jpg`.
+- Step 5 now runs after the NEW application row is created on the Step 4 →
+  Step 5 transition. `BiometricCaptureWidget` receives the real backend UUID,
+  so face-frame storage paths use the actual `application_id`.
+
+### Backend surface added
+- `backend/src/storage/storage.module.ts` (imports `AuthModule` so the
+  controller-level `JwtAuthGuard` resolves its `JwtService` dep).
+- `backend/src/storage/storage.service.ts` —
+  `generateBiometricsSignedUploadUrl(applicationId, fileName)` uses
+  `supabase.storage.from(bucket).createSignedUploadUrl(path)`. The
+  service-role client is constructed with `persistSession: false` and
+  `autoRefreshToken: false`.
+- `backend/src/storage/storage.controller.ts` —
+  `POST /api/storage/biometrics/upload-url` guarded by `JwtAuthGuard`.
+- `applications.controller.ts` — `PATCH /api/applications/:id/biometric-frames`
+  guarded by `JwtAuthGuard + RolesGuard @Roles('citizen')`.
+- `applications.service.ts` — `updateBiometricFrameUrls(applicationId, urls)`
+  upserts via
+  `INSERT ... ON CONFLICT (application_id) DO UPDATE SET face_frame_urls = EXCLUDED.face_frame_urls`.
+- `app.module.ts` — registers `StorageModule`.
+
+### DB schema (`006_biometric_face_frames.sql`)
+- `ALTER TABLE biometric_data ADD COLUMN IF NOT EXISTS face_frame_urls JSONB DEFAULT '[]'`.
+- `UNIQUE (application_id)` constraint added if missing (so the upsert is
+  deterministic).
+
+### Frontend service (`biometricUploadService.ts`)
+Exports:
+- `captureFrameFromVideo(video, canvas)` — `canvas.toBlob('image/jpeg', 0.9)`
+  wrapped in a Promise.
+- `getSignedUploadUrl(applicationId, fileName)` — calls the new backend
+  endpoint via `apiClient.post`.
+- `uploadFrameToStorage(signedUrl, blob)` — direct `fetch(PUT signedUrl)`
+  with `Content-Type: image/jpeg`, bypassing `apiClient` so no auth
+  header is attached to the Supabase Storage upload.
+- `captureAndUploadFrames(applicationId, position, video, canvas, frameCount=3)`
+- `saveBiometricFrameUrls(applicationId, allFramePaths)` — uses the new
+  `apiClient.patch`.
+
+### Environment variables
+`backend/.env` already had `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
+from earlier sessions. Added a commented placeholder for the optional
+`SUPABASE_BIOMETRICS_BUCKET` (defaults to `'biometrics'`).
+
+> **Action item:** the `biometrics` bucket needs to be created in the
+> Supabase dashboard. It can be private — the service-role key signs
+> uploads, and the client never reads frames back.
+
+### ML pipeline integration point (deferred)
+Once the dedicated face-matching service is wired from the Digital
+Ocean droplet, the integration is:
+1. Backend reads `biometric_data.face_frame_urls`.
+2. Generates signed *download* URLs for each path.
+3. POSTs the verification payload to
+   `http://64.227.163.65:8001/visualize-pipeline`.
+4. Service writes the comparison result back to
+   `biometric_data.verification_status`.
+
+This widget produces the inputs; the verification call itself is not
+wired yet. Current test endpoints supplied by the ML service are:
+- ID extraction: `POST http://64.227.163.65:8000/extract-id-data`
+- Face verification: `POST http://64.227.163.65:8001/visualize-pipeline`
+
+### What stays deferred
+- ML `/visualize-pipeline` integration.
+- Fingerprint capture — explicitly cancelled for this build.
+- Face-ID matching against the document photo — owned by the ML pipeline.
+- The `applications_assigned_officer_id_fkey` issue in `approveApplication`
+  (`issueApplication` was fixed in Session 19; the same latent bug may
+  still exist in approve).
+
+### Runtime caveats
+- MediaPipe WASM + `.task` model are fetched from public CDNs on first
+  capture. For production, self-host both.
+- `getUserMedia` requires HTTPS (`localhost:5173` is fine for dev).
+- GPU delegate falls back to CPU on browsers without WebGL2 — FPS drops
+  but accuracy is unaffected.
+- The eyewear check is a blendshape-based approximation; clear lenses
+  will not trigger it, and rapid blinks can produce false positives.
+  A dedicated glasses classifier is the correct long-term fix.
+- Liveness yaw thresholds are evaluated frame-by-frame with no temporal
+  smoothing — heavy jitter may advance the state machine prematurely.
+
+### Verification
+- `tsc --noEmit` clean in `frontend/`.
+- `tsc --noEmit` in `backend/` produces one pre-existing error in
+  `src/app.controller.spec.ts` (`getHello` from the Nest scaffold);
+  zero new errors from this session's additions.
+
+---
+
+## Session 23 - Identity Document Split for ML Inputs
+
+### Goal
+Replace the single generic identity-document upload in the passport application
+flow with an explicit choice:
+- **National ID**: requires two image uploads, front and back.
+- **Civil Registry Extract**: requires one document upload.
+
+The new National ID fields are stored as string URL fields (`frontUrl` and
+`backUrl` in frontend/backend JSON, corresponding to the ML model's
+`front_url` and `back_url`). They are not arrays.
+
+### ML contract context
+Read `SafarPass API Contract.pdf`. The contract says files are uploaded to
+Supabase Storage first, then the ML service receives JSON payloads containing
+URLs. The supplied test bases are:
+- ID extraction: `POST http://64.227.163.65:8000/extract-id-data`
+- Face verification: `POST http://64.227.163.65:8001/visualize-pipeline`
+
+No ML verification call is wired in this session; this session prepares the
+document URL shape consumed by the later verification pipeline.
+
+### Frontend changes
+- `NewPassportApplicationPage.tsx`
+  - Step 3 now has an identity document type selector.
+  - National ID path requires `frontUrl` and `backUrl` image uploads
+    (`.jpg`, `.jpeg`, `.png` only).
+  - Civil Registry Extract path requires `civilRegistryExtract`
+    (`.pdf`, `.jpg`, `.jpeg`, `.png`).
+  - Review step shows the selected identity type and the exact uploaded files.
+  - Early NEW application creation includes the new document snapshot.
+- `documentService.ts`
+  - Maps `frontUrl` -> `national_id_front`,
+    `backUrl` -> `national_id_back`, and
+    `civilRegistryExtract` -> `civil_registry_extract`.
+- `applicationService.ts` / `apiAdapters.ts`
+  - Added `identityDocumentType`.
+  - Added `frontUrl`, `backUrl`, and `civilRegistryExtract` to
+    `PassportApplication.documents`.
+  - Kept legacy `identityDocument` optional for old seeded/mock records.
+- Staff/resubmission UI
+  - Mukhtar and Officer document panels now display the split identity fields.
+  - Mukhtar resubmission requests can target ID front, ID back, or extract.
+  - Citizen resubmission page renders the correct replacement fields based on
+    the application's identity document type.
+- Checklist/assistant copy now mentions National ID front/back images.
+
+### Backend changes
+- `DocumentsService`
+  - Accepts `national_id_front`, `national_id_back`, and
+    `civil_registry_extract` document types.
+  - Enforces image-only uploads for National ID front/back and passport photos.
+- `ApplicationsService`
+  - Aggregates new document rows back to frontend keys:
+    `frontUrl`, `backUrl`, `civilRegistryExtract`.
+  - Supports resubmission reasons for the new document keys.
+
+### Storage / DB impact
+No DB migration required. The existing `documents.document_type` text field can
+store the new values:
+- `national_id_front`
+- `national_id_back`
+- `civil_registry_extract`
+
+The uploaded Supabase URLs remain stored in `documents.file_url`.
+
+### Verification
+- Frontend: `tsc --noEmit` clean.
+- Backend: `tsc -p tsconfig.build.json --noEmit` clean.

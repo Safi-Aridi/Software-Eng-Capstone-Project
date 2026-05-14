@@ -25,6 +25,7 @@
     "@nestjs/core": "^11.0.1",
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/platform-express": "^11.0.1",
+    "@supabase/supabase-js": "^2.105.4",
     "@types/bcrypt": "^6.0.0",
     "bcrypt": "^6.0.0",
     "pg": "^8.20.0",

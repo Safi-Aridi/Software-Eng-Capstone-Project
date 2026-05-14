@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { authService } from "../services/authService";
 import {
   applicationService,
+  type IdentityDocumentType,
   type PassportApplication,
 } from "../services/applicationService";
 import { passportService } from "../services/passportService";
@@ -15,6 +16,9 @@ type ValidityYears = 5 | 10;
 
 interface DocumentFiles {
   identityDocument: File | null;
+  frontUrl: File | null;
+  backUrl: File | null;
+  civilRegistryExtract: File | null;
   passportPhoto: File | null;
   oldPassport: File | null;
 }
@@ -32,7 +36,7 @@ const STEP_LABELS_NEW = [
   "Passport Details",
   "Document Upload",
   "Mukhtar Details",
-  "Biometric Capture",
+  "Face Capture",
   "Review & Submit",
 ];
 
@@ -73,8 +77,13 @@ const NewPassportApplicationPage = () => {
     useState<ApplicationType | null>(presetType);
   const [passportValidity, setPassportValidity] =
     useState<ValidityYears | null>(null);
+  const [identityDocumentType, setIdentityDocumentType] =
+    useState<IdentityDocumentType>("NATIONAL_ID");
   const [documents, setDocuments] = useState<DocumentFiles>({
     identityDocument: null,
+    frontUrl: null,
+    backUrl: null,
+    civilRegistryExtract: null,
     passportPhoto: null,
     oldPassport: null,
   });
@@ -84,9 +93,16 @@ const NewPassportApplicationPage = () => {
     mukhtarName: "",
   });
   const [biometricCaptured, setBiometricCaptured] = useState(false);
+  // For NEW applications, the row is created on the Step 4 → Step 5
+  // transition so the real UUID is available to the BiometricCaptureWidget.
+  // RENEWAL skips Step 5 and still creates the row at final submit.
+  const [createdApplicationId, setCreatedApplicationId] = useState<
+    string | null
+  >(null);
   const [feeAcknowledged, setFeeAcknowledged] = useState(false);
   const [stepErrors, setStepErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isAdvancing, setIsAdvancing] = useState(false);
   const [submitError, setSubmitError] = useState("");
 
   if (!currentUser || currentUser.role !== "citizen") {
@@ -99,7 +115,7 @@ const NewPassportApplicationPage = () => {
     return null;
   }
 
-  const goNext = () => {
+  const goNext = async () => {
     const errs: Record<string, string> = {};
 
     if (step === 1 && !applicationType) {
@@ -109,8 +125,16 @@ const NewPassportApplicationPage = () => {
       errs.validity = "Please select a passport validity period.";
     }
     if (step === 3) {
-      if (!documents.identityDocument)
-        errs.identityDocument = "Identity document is required.";
+      if (identityDocumentType === "NATIONAL_ID") {
+        if (!documents.frontUrl)
+          errs.frontUrl = "National ID front image is required.";
+        if (!documents.backUrl)
+          errs.backUrl = "National ID back image is required.";
+      } else {
+        if (!documents.civilRegistryExtract)
+          errs.civilRegistryExtract =
+            "Civil Registry Extract document is required.";
+      }
       if (!documents.passportPhoto)
         errs.passportPhoto = "Passport photo is required.";
       if (applicationType === "RENEWAL" && !documents.oldPassport)
@@ -134,6 +158,50 @@ const NewPassportApplicationPage = () => {
     }
 
     setStepErrors({});
+
+    // Step 4 → Step 5 transition for NEW applications: create the application
+    // now so its real UUID can be used as the storage path for face frames.
+    // If the user navigated Back and is re-advancing, reuse the existing id.
+    if (
+      step === 4 &&
+      applicationType === "NEW" &&
+      createdApplicationId === null
+    ) {
+      setIsAdvancing(true);
+      setSubmitError("");
+      try {
+        const created = await applicationService.createApplication(
+          currentUser.user.id,
+          {
+            applicationId: "app_" + Date.now(),
+            userId: currentUser.user.id,
+            applicationType: "NEW",
+            currentStatus: "PENDING_REVIEW",
+            submissionDate: new Date().toISOString(),
+            trackingNumber: applicationService.generateTrackingNumber(),
+            passportValidity: passportValidity!,
+            feeAmount: FEE_MAP[passportValidity!],
+            paymentStatus: "UNPAID",
+            identityDocumentType,
+            documents: buildDocumentSnapshot(),
+            mukhtarFormData: mukhtarForm,
+            biometricCaptured: false,
+            renewingPassportId: null,
+          },
+        );
+        setCreatedApplicationId(created.applicationId);
+      } catch (err) {
+        setSubmitError(
+          err instanceof Error
+            ? err.message
+            : "Failed to create application. Please try again.",
+        );
+        return;
+      } finally {
+        setIsAdvancing(false);
+      }
+    }
+
     // Renewal skips step 5 (biometrics): jump from 4 to 6
     if (applicationType === "RENEWAL" && step === 4) {
       setStep(6);
@@ -171,6 +239,37 @@ const NewPassportApplicationPage = () => {
     setDocuments((prev) => ({ ...prev, [field]: null }));
   };
 
+  const handleIdentityDocumentTypeChange = (type: IdentityDocumentType) => {
+    setIdentityDocumentType(type);
+    setDocuments((prev) =>
+      type === "NATIONAL_ID"
+        ? { ...prev, identityDocument: null, civilRegistryExtract: null }
+        : {
+            ...prev,
+            identityDocument: null,
+            frontUrl: null,
+            backUrl: null,
+          },
+    );
+    setStepErrors((prev) => {
+      const next = { ...prev };
+      delete next.identityDocument;
+      delete next.frontUrl;
+      delete next.backUrl;
+      delete next.civilRegistryExtract;
+      return next;
+    });
+  };
+
+  const buildDocumentSnapshot = (): PassportApplication["documents"] => ({
+    identityDocument: null,
+    frontUrl: documents.frontUrl?.name ?? null,
+    backUrl: documents.backUrl?.name ?? null,
+    civilRegistryExtract: documents.civilRegistryExtract?.name ?? null,
+    passportPhoto: documents.passportPhoto?.name ?? null,
+    oldPassport: documents.oldPassport?.name ?? null,
+  });
+
   const handleMukhtarChange = (field: keyof MukhtarForm, value: string) => {
     setMukhtarForm((prev) => ({ ...prev, [field]: value }));
     if (value.trim()) setStepErrors((prev) => ({ ...prev, [field]: "" }));
@@ -181,50 +280,53 @@ const NewPassportApplicationPage = () => {
     setSubmitError("");
 
     try {
-      const trackingNumber = applicationService.generateTrackingNumber();
-      const applicationId = "app_" + Date.now();
+      let finalApplicationId = createdApplicationId;
 
-      // Resolve fromExpiry (the applicationId that produced the passport being renewed)
-      // to the corresponding passportId, so the expiry banner can be suppressed while
-      // this renewal is active. Non-blocking — old seeded data without passport
-      // records yields null. Renewals started without the banner stay null too;
-      // banner suppression won't apply for those (acceptable v1 limitation).
-      let renewingPassportId: string | null = null;
-      const fromExpiry = searchParams.get("fromExpiry");
-      if (applicationType === "RENEWAL" && fromExpiry) {
-        const passports = await passportService.getPassportsByUser(
+      // NEW applications already created at Step 4 → Step 5 transition.
+      // RENEWAL skips Step 5 entirely, so we create it here at submit time.
+      if (applicationType === "RENEWAL") {
+        // Resolve fromExpiry to a passportId so the expiry banner can be
+        // suppressed while this renewal is active.
+        let renewingPassportId: string | null = null;
+        const fromExpiry = searchParams.get("fromExpiry");
+        if (fromExpiry) {
+          const passports = await passportService.getPassportsByUser(
+            currentUser.user.id,
+          );
+          const match = passports.find(
+            (p) => p.sourceApplicationId === fromExpiry,
+          );
+          renewingPassportId = match?.passportId ?? null;
+        }
+
+        const created = await applicationService.createApplication(
           currentUser.user.id,
+          {
+            applicationId: "app_" + Date.now(),
+            userId: currentUser.user.id,
+            applicationType: "RENEWAL",
+            currentStatus: "PENDING_REVIEW",
+            submissionDate: new Date().toISOString(),
+            trackingNumber: applicationService.generateTrackingNumber(),
+            passportValidity: passportValidity!,
+            feeAmount: FEE_MAP[passportValidity!],
+            paymentStatus: "UNPAID",
+            identityDocumentType,
+            documents: buildDocumentSnapshot(),
+            mukhtarFormData: mukhtarForm,
+            biometricCaptured,
+            renewingPassportId,
+          },
         );
-        const match = passports.find((p) => p.sourceApplicationId === fromExpiry);
-        renewingPassportId = match?.passportId ?? null;
+        finalApplicationId = created.applicationId;
       }
 
-      const application: PassportApplication = {
-        applicationId,
-        userId: currentUser.user.id,
-        applicationType: applicationType!,
-        currentStatus: "PENDING_REVIEW",
-        submissionDate: new Date().toISOString(),
-        trackingNumber,
-        passportValidity: passportValidity!,
-        feeAmount: FEE_MAP[passportValidity!],
-        paymentStatus: "UNPAID",
-        documents: {
-          identityDocument: documents.identityDocument?.name ?? null,
-          passportPhoto: documents.passportPhoto?.name ?? null,
-          oldPassport: documents.oldPassport?.name ?? null,
-        },
-        mukhtarFormData: mukhtarForm,
-        biometricCaptured,
-        renewingPassportId,
-      };
+      if (!finalApplicationId) {
+        throw new Error("Application ID missing — please restart the flow.");
+      }
 
-      const created = await applicationService.createApplication(
-        currentUser.user.id,
-        application,
-      );
-      await documentService.uploadDocuments(created.applicationId, documents);
-      navigate(`/application/pay/${created.applicationId}`);
+      await documentService.uploadDocuments(finalApplicationId, documents);
+      navigate(`/application/pay/${finalApplicationId}`);
     } catch (err) {
       setSubmitError(
         err instanceof Error
@@ -281,6 +383,8 @@ const NewPassportApplicationPage = () => {
           {step === 3 && (
             <Step3Documents
               applicationType={applicationType!}
+              identityDocumentType={identityDocumentType}
+              onIdentityDocumentTypeChange={handleIdentityDocumentTypeChange}
               documents={documents}
               stepErrors={stepErrors}
               onFileChange={handleFileChange}
@@ -294,8 +398,9 @@ const NewPassportApplicationPage = () => {
               errors={stepErrors}
             />
           )}
-          {step === 5 && applicationType === "NEW" && (
+          {step === 5 && applicationType === "NEW" && createdApplicationId && (
             <Step5BiometricCapture
+              applicationId={createdApplicationId}
               biometricCaptured={biometricCaptured}
               onBiometricCapture={() => {
                 setBiometricCaptured(true);
@@ -309,6 +414,7 @@ const NewPassportApplicationPage = () => {
               applicationType={applicationType!}
               passportValidity={passportValidity!}
               feeAmount={FEE_MAP[passportValidity!]}
+              identityDocumentType={identityDocumentType}
               documents={documents}
               mukhtarForm={mukhtarForm}
               biometricCaptured={biometricCaptured}
@@ -338,9 +444,13 @@ const NewPassportApplicationPage = () => {
             {step < 6 ? (
               <button
                 onClick={goNext}
-                className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                disabled={isAdvancing}
+                className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
               >
-                Next
+                {isAdvancing && (
+                  <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                )}
+                {isAdvancing ? "Creating..." : "Next"}
               </button>
             ) : (
               <button
@@ -525,12 +635,16 @@ const Step2PassportDetails = ({
 
 const Step3Documents = ({
   applicationType,
+  identityDocumentType,
+  onIdentityDocumentTypeChange,
   documents,
   stepErrors,
   onFileChange,
   onClearFile,
 }: {
   applicationType: ApplicationType;
+  identityDocumentType: IdentityDocumentType;
+  onIdentityDocumentTypeChange: (type: IdentityDocumentType) => void;
   documents: DocumentFiles;
   stepErrors: Record<string, string>;
   onFileChange: (field: keyof DocumentFiles, file: File | null) => void;
@@ -546,19 +660,83 @@ const Step3Documents = ({
     </p>
 
     <div className="space-y-5">
-      <EnhancedFileUploadField
-        id="identityDocument"
-        label="Identity Document"
-        accept=".pdf,.jpg,.jpeg,.png"
-        acceptLabel="PDF, JPG, PNG"
-        file={documents.identityDocument}
-        stepError={stepErrors.identityDocument}
-        required
-        validator={isValidDoc}
-        typeErrorMsg="Only PDF, JPG, and PNG files are accepted."
-        onChange={(f) => onFileChange("identityDocument", f)}
-        onClear={() => onClearFile("identityDocument")}
-      />
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Identity Document Type <span className="text-red-500">*</span>
+        </label>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {([
+            ["NATIONAL_ID", "National ID"],
+            ["CIVIL_REGISTRY_EXTRACT", "Civil Registry Extract"],
+          ] as const).map(([value, label]) => (
+            <label
+              key={value}
+              className={`flex items-center gap-3 p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                identityDocumentType === value
+                  ? "border-blue-600 bg-blue-50"
+                  : "border-gray-200 hover:border-blue-300"
+              }`}
+            >
+              <input
+                type="radio"
+                name="identityDocumentType"
+                value={value}
+                checked={identityDocumentType === value}
+                onChange={() => onIdentityDocumentTypeChange(value)}
+                className="accent-blue-600"
+              />
+              <span className="text-sm font-medium text-gray-800">
+                {label}
+              </span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {identityDocumentType === "NATIONAL_ID" ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <EnhancedFileUploadField
+            id="frontUrl"
+            label="National ID Front"
+            accept=".jpg,.jpeg,.png"
+            acceptLabel="JPG, PNG"
+            file={documents.frontUrl}
+            stepError={stepErrors.frontUrl}
+            required
+            validator={isValidPhoto}
+            typeErrorMsg="Only JPG and PNG image files are accepted."
+            onChange={(f) => onFileChange("frontUrl", f)}
+            onClear={() => onClearFile("frontUrl")}
+          />
+          <EnhancedFileUploadField
+            id="backUrl"
+            label="National ID Back"
+            accept=".jpg,.jpeg,.png"
+            acceptLabel="JPG, PNG"
+            file={documents.backUrl}
+            stepError={stepErrors.backUrl}
+            required
+            validator={isValidPhoto}
+            typeErrorMsg="Only JPG and PNG image files are accepted."
+            onChange={(f) => onFileChange("backUrl", f)}
+            onClear={() => onClearFile("backUrl")}
+          />
+        </div>
+      ) : (
+        <EnhancedFileUploadField
+          id="civilRegistryExtract"
+          label="Civil Registry Extract"
+          accept=".pdf,.jpg,.jpeg,.png"
+          acceptLabel="PDF, JPG, PNG"
+          file={documents.civilRegistryExtract}
+          stepError={stepErrors.civilRegistryExtract}
+          required
+          validator={isValidDoc}
+          typeErrorMsg="Only PDF, JPG, and PNG files are accepted."
+          onChange={(f) => onFileChange("civilRegistryExtract", f)}
+          onClear={() => onClearFile("civilRegistryExtract")}
+        />
+      )}
 
       <EnhancedFileUploadField
         id="passportPhoto"
@@ -670,28 +848,31 @@ const Step4MukhtarDetails = ({
 // ─── Step 5: Biometric Capture (NEW applications only) ────────────────────────
 
 const Step5BiometricCapture = ({
+  applicationId,
   biometricCaptured,
   onBiometricCapture,
   error,
 }: {
+  applicationId: string;
   biometricCaptured: boolean;
   onBiometricCapture: () => void;
   error?: string;
 }) => (
   <div>
     <h2 className="text-lg font-semibold text-gray-800 mb-1">
-      Biometric Capture
+      Face Capture
     </h2>
     <p className="text-gray-500 text-sm mb-6">
-      Biometric data is required for all new passport applications.
+      A live face capture is required for all new passport applications.
     </p>
 
     {biometricCaptured ? (
       <div className="flex items-center gap-2 text-green-700 font-medium p-4 bg-green-50 border border-green-200 rounded-lg">
-        <span className="text-2xl">✓</span> Biometric capture complete
+        <span className="text-2xl">✓</span> Face capture complete
       </div>
     ) : (
       <BiometricCaptureWidget
+        applicationId={applicationId}
         onCaptureComplete={(result) => {
           if (result.faceCaptured && result.fingerprintsCaptured) {
             onBiometricCapture();
@@ -710,8 +891,8 @@ const Step5BiometricCapture = ({
     )}
 
     <p className="text-gray-500 text-xs mt-4">
-      Biometric data is encrypted and stored in compliance with ISO/IEC 19794-4
-      and ISO/IEC 19794-5.
+      Face capture data is encrypted and stored in compliance with ISO/IEC
+      19794-5.
     </p>
 
     {error && <p className="text-red-600 text-xs mt-3">{error}</p>}
@@ -724,6 +905,7 @@ const Step6Review = ({
   applicationType,
   passportValidity,
   feeAmount,
+  identityDocumentType,
   documents,
   mukhtarForm,
   biometricCaptured,
@@ -733,6 +915,7 @@ const Step6Review = ({
   applicationType: ApplicationType;
   passportValidity: ValidityYears;
   feeAmount: number;
+  identityDocumentType: IdentityDocumentType;
   documents: DocumentFiles;
   mukhtarForm: MukhtarForm;
   biometricCaptured: boolean;
@@ -764,9 +947,30 @@ const Step6Review = ({
 
       <ReviewSection title="Documents">
         <ReviewRow
-          label="Identity Document"
-          value={documents.identityDocument?.name ?? "—"}
+          label="Identity Document Type"
+          value={
+            identityDocumentType === "NATIONAL_ID"
+              ? "National ID"
+              : "Civil Registry Extract"
+          }
         />
+        {identityDocumentType === "NATIONAL_ID" ? (
+          <>
+            <ReviewRow
+              label="National ID Front"
+              value={documents.frontUrl?.name ?? "—"}
+            />
+            <ReviewRow
+              label="National ID Back"
+              value={documents.backUrl?.name ?? "—"}
+            />
+          </>
+        ) : (
+          <ReviewRow
+            label="Civil Registry Extract"
+            value={documents.civilRegistryExtract?.name ?? "—"}
+          />
+        )}
         <ReviewRow
           label="Passport Photo"
           value={documents.passportPhoto?.name ?? "—"}
@@ -788,7 +992,7 @@ const Step6Review = ({
       {applicationType === "NEW" && (
         <ReviewSection title="Biometrics">
           <ReviewRow
-            label="Biometric Capture"
+            label="Face Capture"
             value={biometricCaptured ? "Completed" : "Not captured"}
           />
         </ReviewSection>

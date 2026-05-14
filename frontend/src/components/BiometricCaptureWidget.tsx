@@ -1,68 +1,46 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  FaceLandmarker,
+  FilesetResolver,
+  type FaceLandmarkerResult,
+} from "@mediapipe/tasks-vision";
+import {
+  captureAndUploadFrames,
+  saveBiometricFrameUrls,
+  type CapturePosition,
+} from "../services/biometricUploadService";
 
 export interface BiometricCaptureWidgetProps {
+  applicationId: string;
   onCaptureComplete: (result: {
     faceCaptured: boolean;
     fingerprintsCaptured: boolean;
   }) => void;
 }
 
-type Stage = "FACE" | "FINGERPRINT";
-
-// SRS Table 4 — Face capture conditions
-const FACE_CONDITIONS = [
-  { key: "EYEWEAR", message: "Please remove your glasses." },
-  { key: "OUT_OF_FRAME", message: "Position your face completely within the oval." },
-  { key: "TURN_RIGHT", message: "Turn your head slowly to the right." },
-  { key: "TURN_LEFT", message: "Turn your head slowly to the left." },
-  {
-    key: "PITCH_YAW_ROLL",
-    message:
-      "Look directly at the camera with a neutral expression and mouth closed.",
-  },
-  { key: "POOR_LIGHTING", message: "Move to a brighter, well-lit area." },
-  { key: "MULTIPLE_FACES", message: "Ensure you are the only person in the frame." },
-] as const;
-
-// SRS Table 4 — Fingerprint capture conditions (excluding "Incorrect sequence",
-// which is handled separately and displays the current expected step)
-const FINGER_CONDITIONS = [
-  {
-    key: "MOTION_BLUR",
-    message: "Hold your hand steady in front of the camera.",
-  },
-  {
-    key: "FOCAL_DISTANCE",
-    message: "Move your hand closer to the camera.",
-  },
-  {
-    key: "LOW_LIGHTING",
-    message: "Environment too dark, move to a brighter area.",
-  },
-  {
-    key: "BACKGROUND_CLUTTER",
-    message: "Please hold your hand against a plain, solid-colored background.",
-  },
-  {
-    key: "FINGERS_NOT_JOINED",
-    message: "Keep your fingers pressed flat and close together.",
-  },
-  { key: "INCORRECT_SEQUENCE", message: "" }, // filled with expected-step message
-] as const;
-
-const FINGER_SEQUENCE = [
-  "Show all 4 fingers of the RIGHT hand.",
-  "Show all 4 fingers of the LEFT hand.",
-  "Both THUMBS.",
-];
-
-const ALL_CLEAR_MSG = "Perfect. Hold still for three seconds.";
-
-const FEEDBACK_TICK_MS = 2500;
 const TIMER_TICK_MS = 100;
 const TIMER_DURATION_MS = 3000;
-const FACE_ALL_CLEAR_PROB = 0.3;
-const FINGER_ALL_CLEAR_PROB = 0.35;
+const CAPTURE_TIMER_DURATION_MS = 5000;
+const ALL_CLEAR_MSG = "Perfect. Hold still for three seconds.";
+
+const WASM_URL =
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm";
+const MODEL_URL =
+  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+
+const CAPTURE_SEQUENCE: CapturePosition[] = ["center", "right", "left"];
+
+const POSITION_INSTRUCTIONS: Record<CapturePosition, string> = {
+  center: "Perfect. Hold still — capturing...",
+  right: "Turn right and hold still — capturing...",
+  left: "Turn left and hold still — capturing...",
+};
+
+const POSITION_WAITING: Record<CapturePosition, string> = {
+  center: "Face the camera straight on.",
+  right: "Turn your head slowly to the right.",
+  left: "Turn your head slowly to the left.",
+};
 
 interface Feedback {
   isAllClear: boolean;
@@ -70,84 +48,82 @@ interface Feedback {
   flashRed: boolean;
 }
 
+type LivenessState =
+  | "waiting_right"
+  | "turned_right"
+  | "waiting_left"
+  | "done";
+
+type CapturePhase = "liveness" | "positioning" | "capturing" | "saving" | "done";
+
+const yawInRange = (yaw: number, position: CapturePosition): boolean => {
+  if (position === "center") return yaw > -10 && yaw < 10;
+  if (position === "right") return yaw < -15;
+  return yaw > 15;
+};
+
 const BiometricCaptureWidget = ({
+  applicationId,
   onCaptureComplete,
 }: BiometricCaptureWidgetProps) => {
-  const [stage, setStage] = useState<Stage>("FACE");
   const [faceComplete, setFaceComplete] = useState(false);
-  const [fingerStepIdx, setFingerStepIdx] = useState(0); // 0..2
-  const [fingerComplete, setFingerComplete] = useState(false);
-
   const [feedback, setFeedback] = useState<Feedback>({
     isAllClear: false,
     message: "Initializing camera...",
     flashRed: false,
   });
-  const [progress, setProgress] = useState(0); // 0..100
+  const [progress, setProgress] = useState(0);
   const [processing, setProcessing] = useState(false);
+  const [modelLoaded, setModelLoaded] = useState(false);
+  const [videoReady, setVideoReady] = useState(false);
 
-  const feedbackIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [capturePhase, setCapturePhase] = useState<CapturePhase>("liveness");
+  const [currentPosition, setCurrentPosition] =
+    useState<CapturePosition | null>(null);
+  const [capturedPositions, setCapturedPositions] = useState<CapturePosition[]>(
+    [],
+  );
+
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const livenessRef = useRef<{ state: LivenessState; completed: boolean }>({
+    state: "waiting_right",
+    completed: false,
+  });
+  const yawRef = useRef(0);
+  const capturePhaseRef = useRef<CapturePhase>("liveness");
+  const currentPositionRef = useRef<CapturePosition | null>(null);
+  const allFramePathsRef = useRef<string[]>([]);
+
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const captureTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const flashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const transitionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transitionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const completedRef = useRef(false);
 
-  const clearFeedbackInterval = () => {
-    if (feedbackIntervalRef.current) {
-      clearInterval(feedbackIntervalRef.current);
-      feedbackIntervalRef.current = null;
-    }
-  };
+  useEffect(() => {
+    capturePhaseRef.current = capturePhase;
+  }, [capturePhase]);
+  useEffect(() => {
+    currentPositionRef.current = currentPosition;
+  }, [currentPosition]);
+
   const clearTimer = () => {
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
     }
   };
-  const clearAll = () => {
-    clearFeedbackInterval();
-    clearTimer();
-    if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current);
-    if (transitionTimeoutRef.current) clearTimeout(transitionTimeoutRef.current);
-  };
-
-  useEffect(() => () => clearAll(), []);
-
-  // Pick the next simulated condition for the current stage / sub-step.
-  const pickFeedback = (): Feedback => {
-    if (stage === "FACE") {
-      if (Math.random() < FACE_ALL_CLEAR_PROB) {
-        return { isAllClear: true, message: ALL_CLEAR_MSG, flashRed: false };
-      }
-      const c =
-        FACE_CONDITIONS[Math.floor(Math.random() * FACE_CONDITIONS.length)];
-      return { isAllClear: false, message: c.message, flashRed: false };
+  const clearCaptureTimer = () => {
+    if (captureTimerRef.current) {
+      clearInterval(captureTimerRef.current);
+      captureTimerRef.current = null;
     }
-    // FINGERPRINT
-    if (Math.random() < FINGER_ALL_CLEAR_PROB) {
-      return { isAllClear: true, message: ALL_CLEAR_MSG, flashRed: false };
-    }
-    const c =
-      FINGER_CONDITIONS[Math.floor(Math.random() * FINGER_CONDITIONS.length)];
-    const message =
-      c.key === "INCORRECT_SEQUENCE" ? FINGER_SEQUENCE[fingerStepIdx] : c.message;
-    return { isAllClear: false, message, flashRed: false };
-  };
-
-  // Stability timer — fills over 3 seconds at 100ms ticks
-  const startTimer = () => {
-    clearTimer();
-    setProgress(0);
-    timerIntervalRef.current = setInterval(() => {
-      setProgress((prev) => {
-        const next = prev + (TIMER_TICK_MS / TIMER_DURATION_MS) * 100;
-        if (next >= 100) {
-          clearTimer();
-          handleCaptureSuccess();
-          return 100;
-        }
-        return next;
-      });
-    }, TIMER_TICK_MS);
   };
 
   const flashRed = () => {
@@ -158,93 +134,567 @@ const BiometricCaptureWidget = ({
     }, 400);
   };
 
-  const handleCaptureSuccess = () => {
-    clearFeedbackInterval();
-    setProcessing(true);
+  // ── Liveness-phase 3-second stability timer ──────────────────────────────
+  const startLivenessTimer = () => {
+    clearTimer();
+    setProgress(0);
+    timerIntervalRef.current = setInterval(() => {
+      setProgress((prev) => {
+        const next = prev + (TIMER_TICK_MS / TIMER_DURATION_MS) * 100;
+        if (next >= 100) {
+          clearTimer();
+          handleLivenessSuccess();
+          return 100;
+        }
+        return next;
+      });
+    }, TIMER_TICK_MS);
+  };
+
+  const handleLivenessSuccess = () => {
+    // Liveness phase done — move into positioning for the first capture.
+    setProgress(0);
+    setCapturePhase("positioning");
+    setCurrentPosition(CAPTURE_SEQUENCE[0]);
+  };
+
+  // ── Capture phase ─────────────────────────────────────────────────────────
+  const runCaptureForPosition = async (position: CapturePosition) => {
+    if (!videoRef.current || !canvasRef.current) return;
+    setCapturePhase("capturing");
     setFeedback({
       isAllClear: true,
-      message:
-        stage === "FACE"
-          ? "Capture successful. Processing..."
-          : fingerStepIdx >= FINGER_SEQUENCE.length - 1
-            ? "Fingerprint capture successful. Processing..."
-            : "Capture successful. Processing...",
+      message: POSITION_INSTRUCTIONS[position],
       flashRed: false,
     });
 
-    transitionTimeoutRef.current = setTimeout(() => {
-      setProcessing(false);
-      if (stage === "FACE") {
-        setFaceComplete(true);
-        setStage("FINGERPRINT");
+    // Visible 5-second capture timer (does not gate the actual upload —
+    // captureAndUploadFrames manages its own per-frame timing).
+    clearCaptureTimer();
+    setProgress(0);
+    const tickMs = 100;
+    captureTimerRef.current = setInterval(() => {
+      setProgress((prev) => {
+        const next = prev + (tickMs / CAPTURE_TIMER_DURATION_MS) * 100;
+        return Math.min(100, next);
+      });
+    }, tickMs);
+
+    try {
+      const paths = await captureAndUploadFrames(
+        applicationId,
+        position,
+        videoRef.current,
+        canvasRef.current,
+        3,
+      );
+      clearCaptureTimer();
+      setProgress(100);
+      allFramePathsRef.current.push(...paths);
+
+      // Brief "Position captured ✓" pause
+      setFeedback({
+        isAllClear: true,
+        message: `${position[0].toUpperCase()}${position.slice(1)} position captured ✓`,
+        flashRed: false,
+      });
+      setCapturedPositions((prev) => [...prev, position]);
+
+      await new Promise((r) => setTimeout(r, 500));
+
+      // Next position?
+      const idx = CAPTURE_SEQUENCE.indexOf(position);
+      const nextPos = CAPTURE_SEQUENCE[idx + 1] ?? null;
+      if (nextPos) {
         setProgress(0);
+        setCurrentPosition(nextPos);
+        setCapturePhase("positioning");
+        setFeedback({
+          isAllClear: false,
+          message: POSITION_WAITING[nextPos],
+          flashRed: false,
+        });
       } else {
-        if (fingerStepIdx < FINGER_SEQUENCE.length - 1) {
-          setFingerStepIdx((i) => i + 1);
-          setProgress(0);
-        } else {
-          setFingerComplete(true);
-          onCaptureComplete({
-            faceCaptured: true,
-            fingerprintsCaptured: true,
+        // All positions captured — save and finish
+        await finishCapture();
+      }
+    } catch (err) {
+      console.error("[BiometricCaptureWidget] capture failed", err);
+      clearCaptureTimer();
+      setProgress(0);
+      setFeedback({
+        isAllClear: false,
+        message: "Upload failed. Please try again.",
+        flashRed: true,
+      });
+      setCapturePhase("positioning");
+    }
+  };
+
+  const finishCapture = async () => {
+    setCapturePhase("saving");
+    setFeedback({
+      isAllClear: true,
+      message: "Processing...",
+      flashRed: false,
+    });
+    try {
+      await saveBiometricFrameUrls(applicationId, allFramePathsRef.current);
+    } catch (err) {
+      console.error("[BiometricCaptureWidget] saveBiometricFrameUrls", err);
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+    if (completedRef.current) return;
+    completedRef.current = true;
+    setCapturePhase("done");
+    setFaceComplete(true);
+    onCaptureComplete({ faceCaptured: true, fingerprintsCaptured: true });
+  };
+
+  // ── Brightness sampling ──────────────────────────────────────────────────
+  const sampleBrightness = (
+    canvas: HTMLCanvasElement,
+    minX: number,
+    minY: number,
+    maxX: number,
+    maxY: number,
+  ): number | null => {
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    const w = canvas.width;
+    const h = canvas.height;
+    const sx = Math.max(0, Math.floor(minX * w));
+    const sy = Math.max(0, Math.floor(minY * h));
+    const sw = Math.max(1, Math.floor((maxX - minX) * w));
+    const sh = Math.max(1, Math.floor((maxY - minY) * h));
+    try {
+      const data = ctx.getImageData(sx, sy, sw, sh).data;
+      const step = Math.max(1, Math.floor((sw * sh) / 400));
+      let sum = 0;
+      let count = 0;
+      for (let i = 0; i < data.length; i += 4 * step) {
+        sum += (data[i] + data[i + 1] + data[i + 2]) / 3;
+        count++;
+      }
+      return count > 0 ? sum / count : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const analyzeFaceResults = (results: FaceLandmarkerResult) => {
+    const faces = results.faceLandmarks ?? [];
+
+    if (faces.length === 0) {
+      return {
+        isAllClear: false,
+        message: "Position your face completely within the oval.",
+        flashRed: false,
+        yaw: 0,
+        haveFace: false,
+      };
+    }
+
+    if (faces.length > 1) {
+      return {
+        isAllClear: false,
+        message: "Ensure you are the only person in the frame.",
+        flashRed: false,
+        yaw: 0,
+        haveFace: true,
+      };
+    }
+
+    const landmarks = faces[0];
+    let minX = 1,
+      minY = 1,
+      maxX = 0,
+      maxY = 0;
+    for (const p of landmarks) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const faceWidth = maxX - minX;
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    if (faceWidth < 0.2) {
+      return {
+        isAllClear: false,
+        message: "Position your face completely within the oval.",
+        flashRed: false,
+        yaw: 0,
+        haveFace: true,
+      };
+    }
+    if (centerX < 0.25 || centerX > 0.75 || centerY < 0.2 || centerY > 0.85) {
+      return {
+        isAllClear: false,
+        message: "Position your face completely within the oval.",
+        flashRed: false,
+        yaw: 0,
+        haveFace: true,
+      };
+    }
+
+    // Poor lighting
+    if (canvasRef.current && videoRef.current) {
+      const canvas = canvasRef.current;
+      const video = videoRef.current;
+      const ctx = canvas.getContext("2d");
+      if (ctx && video.videoWidth > 0) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const brightness = sampleBrightness(canvas, minX, minY, maxX, maxY);
+        if (brightness !== null && brightness < 60) {
+          return {
+            isAllClear: false,
+            message: "Move to a brighter, well-lit area.",
+            flashRed: false,
+            yaw: 0,
+            haveFace: true,
+          };
+        }
+      }
+    }
+
+    const blendshapes = results.faceBlendshapes?.[0]?.categories ?? [];
+    const blinkLeft =
+      blendshapes.find((c) => c.categoryName === "eyeBlinkLeft")?.score ?? 0;
+    const blinkRight =
+      blendshapes.find((c) => c.categoryName === "eyeBlinkRight")?.score ?? 0;
+    if (blinkLeft > 0.4 && blinkRight > 0.4) {
+      return {
+        isAllClear: false,
+        message: "Please remove your glasses.",
+        flashRed: false,
+        yaw: 0,
+        haveFace: true,
+      };
+    }
+
+    const matrixData =
+      results.facialTransformationMatrixes?.[0]?.data ?? null;
+    let yaw = 0;
+    let pitch = 0;
+    let roll = 0;
+    if (matrixData) {
+      yaw = Math.asin(-matrixData[8]) * (180 / Math.PI);
+      pitch = Math.atan2(matrixData[9], matrixData[10]) * (180 / Math.PI);
+      roll = Math.atan2(matrixData[4], matrixData[0]) * (180 / Math.PI);
+    }
+
+    const jawOpen =
+      blendshapes.find((c) => c.categoryName === "jawOpen")?.score ?? 0;
+
+    if (Math.abs(pitch) > 15 || Math.abs(roll) > 15) {
+      return {
+        isAllClear: false,
+        message:
+          "Look directly at the camera with a neutral expression and mouth closed.",
+        flashRed: false,
+        yaw,
+        haveFace: true,
+      };
+    }
+
+    const liveness = livenessRef.current;
+    if (!liveness.completed) {
+      if (liveness.state === "waiting_right") {
+        if (yaw < -20) liveness.state = "turned_right";
+      } else if (liveness.state === "turned_right") {
+        if (yaw > -5) liveness.state = "waiting_left";
+      } else if (liveness.state === "waiting_left") {
+        if (yaw > 20) {
+          liveness.state = "done";
+          liveness.completed = true;
+        }
+      }
+
+      if (!liveness.completed) {
+        if (jawOpen > 0.3) {
+          return {
+            isAllClear: false,
+            message:
+              "Look directly at the camera with a neutral expression and mouth closed.",
+            flashRed: false,
+            yaw,
+            haveFace: true,
+          };
+        }
+        const msg =
+          liveness.state === "waiting_right" ||
+          liveness.state === "turned_right"
+            ? "Turn your head slowly to the right."
+            : "Turn your head slowly to the left.";
+        return {
+          isAllClear: false,
+          message: msg,
+          flashRed: false,
+          yaw,
+          haveFace: true,
+        };
+      }
+    }
+
+    if (Math.abs(yaw) > 15) {
+      return {
+        isAllClear: false,
+        message:
+          "Look directly at the camera with a neutral expression and mouth closed.",
+        flashRed: false,
+        yaw,
+        haveFace: true,
+      };
+    }
+
+    if (jawOpen > 0.3) {
+      return {
+        isAllClear: false,
+        message:
+          "Look directly at the camera with a neutral expression and mouth closed.",
+        flashRed: false,
+        yaw,
+        haveFace: true,
+      };
+    }
+
+    return {
+      isAllClear: true,
+      message: ALL_CLEAR_MSG,
+      flashRed: false,
+      yaw,
+      haveFace: true,
+    };
+  };
+
+  const applyLivenessFeedback = (f: Feedback) => {
+    setFeedback((prev) => {
+      if (prev.isAllClear && !f.isAllClear) {
+        clearTimer();
+        setProgress(0);
+        flashRed();
+        return {
+          isAllClear: false,
+          message: `${f.message} Timer reset. Please hold still.`,
+          flashRed: true,
+        };
+      }
+      return f;
+    });
+
+    if (f.isAllClear && !timerIntervalRef.current && !completedRef.current) {
+      startLivenessTimer();
+    }
+  };
+
+  const positioningStableRef = useRef<{
+    position: CapturePosition | null;
+    since: number;
+  }>({ position: null, since: 0 });
+
+  const applyPositioningFeedback = (
+    haveFace: boolean,
+    yaw: number,
+  ) => {
+    const position = currentPositionRef.current;
+    if (!position) return;
+
+    if (!haveFace) {
+      positioningStableRef.current = { position: null, since: 0 };
+      setFeedback({
+        isAllClear: false,
+        message: "Position your face completely within the oval.",
+        flashRed: false,
+      });
+      return;
+    }
+
+    if (yawInRange(yaw, position)) {
+      const stable = positioningStableRef.current;
+      const now = Date.now();
+      if (stable.position !== position) {
+        positioningStableRef.current = { position, since: now };
+      }
+      const heldFor = now - positioningStableRef.current.since;
+
+      setFeedback({
+        isAllClear: true,
+        message: `Hold ${position} position...`,
+        flashRed: false,
+      });
+
+      // After ~600ms held in range, kick off the capture
+      if (heldFor >= 600 && capturePhaseRef.current === "positioning") {
+        positioningStableRef.current = { position: null, since: 0 };
+        void runCaptureForPosition(position);
+      }
+    } else {
+      positioningStableRef.current = { position: null, since: 0 };
+      setFeedback({
+        isAllClear: false,
+        message: POSITION_WAITING[position],
+        flashRed: false,
+      });
+    }
+  };
+
+  // ── Setup MediaPipe + camera ─────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+
+    const setup = async () => {
+      try {
+        const vision = await FilesetResolver.forVisionTasks(WASM_URL);
+        if (cancelled) return;
+        const landmarker = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: MODEL_URL,
+            delegate: "GPU",
+          },
+          outputFaceBlendshapes: true,
+          outputFacialTransformationMatrixes: true,
+          runningMode: "VIDEO",
+          numFaces: 2,
+        });
+        if (cancelled) {
+          landmarker.close();
+          return;
+        }
+        faceLandmarkerRef.current = landmarker;
+        setModelLoaded(true);
+      } catch (err) {
+        console.error("[BiometricCaptureWidget] Model load failed", err);
+        if (!cancelled) {
+          setFeedback({
+            isAllClear: false,
+            message:
+              "Failed to initialize face detection. Please reload the page.",
+            flashRed: false,
           });
         }
       }
-    }, 1000);
-  };
 
-  // Start / restart the simulated ML feedback loop for the current stage / sub-step.
-  // Re-runs whenever stage or fingerStepIdx changes.
-  useEffect(() => {
-    if (processing) return;
-    if (fingerComplete) return;
-
-    setProgress(0);
-    setFeedback({
-      isAllClear: false,
-      message:
-        stage === "FACE"
-          ? "Position your face within the oval to begin."
-          : FINGER_SEQUENCE[fingerStepIdx],
-      flashRed: false,
-    });
-
-    feedbackIntervalRef.current = setInterval(() => {
-      const f = pickFeedback();
-      setFeedback((prev) => {
-        // If timer is running (we previously had ALL CLEAR) and the new feedback
-        // is NOT all-clear, reset the timer and surface the reset message.
-        if (prev.isAllClear && !f.isAllClear) {
-          clearTimer();
-          setProgress(0);
-          flashRed();
-          return {
-            isAllClear: false,
-            message: `${f.message} Timer reset. Please hold still.`,
-            flashRed: true,
-          };
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480, facingMode: "user" },
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
         }
-        return f;
-      });
-
-      if (f.isAllClear) {
-        // Start the stability timer if not already running
-        if (!timerIntervalRef.current) startTimer();
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => undefined);
+          setVideoReady(true);
+        }
+      } catch (err) {
+        console.error("[BiometricCaptureWidget] Camera access failed", err);
+        if (!cancelled) {
+          setFeedback({
+            isAllClear: false,
+            message:
+              "Camera access denied. Please allow camera access in your browser.",
+            flashRed: false,
+          });
+        }
       }
-    }, FEEDBACK_TICK_MS);
+    };
+
+    setup();
 
     return () => {
-      clearFeedbackInterval();
+      cancelled = true;
       clearTimer();
+      clearCaptureTimer();
+      if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current);
+      if (transitionTimeoutRef.current)
+        clearTimeout(transitionTimeoutRef.current);
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      const stream = streamRef.current;
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+      const lm = faceLandmarkerRef.current;
+      if (lm) {
+        try {
+          lm.close();
+        } catch {
+          // ignore
+        }
+        faceLandmarkerRef.current = null;
+      }
+    };
+  }, []);
+
+  // ── Detection loop ───────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!modelLoaded || !videoReady) return;
+    if (completedRef.current) return;
+
+    let stopped = false;
+    let lastTs = -1;
+
+    const loop = () => {
+      if (stopped) return;
+      const video = videoRef.current;
+      const lm = faceLandmarkerRef.current;
+      if (video && lm && video.readyState >= 2) {
+        const ts = performance.now();
+        if (ts !== lastTs) {
+          lastTs = ts;
+          try {
+            const results = lm.detectForVideo(video, ts);
+            const phase = capturePhaseRef.current;
+            if (phase === "liveness") {
+              const r = analyzeFaceResults(results);
+              yawRef.current = r.yaw;
+              applyLivenessFeedback({
+                isAllClear: r.isAllClear,
+                message: r.message,
+                flashRed: r.flashRed,
+              });
+            } else if (phase === "positioning") {
+              // Still want a quick yaw extraction for positioning checks.
+              const r = analyzeFaceResults(results);
+              yawRef.current = r.yaw;
+              applyPositioningFeedback(r.haveFace, r.yaw);
+            }
+            // 'capturing' and 'saving' phases skip per-frame feedback — the
+            // capture timer & async flow drive the UI instead.
+          } catch (err) {
+            console.error("[BiometricCaptureWidget] detectForVideo", err);
+          }
+        }
+      }
+      rafRef.current = requestAnimationFrame(loop);
+    };
+    rafRef.current = requestAnimationFrame(loop);
+
+    return () => {
+      stopped = true;
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stage, fingerStepIdx]);
+  }, [modelLoaded, videoReady, processing]);
 
   // ── Visuals ───────────────────────────────────────────────────────────────
 
   const frameBorderClass = (() => {
     if (feedback.flashRed) return "border-red-500";
-    if (feedback.isAllClear || progress > 0) return "border-green-500 border-solid";
+    if (feedback.isAllClear || progress > 0)
+      return "border-green-500 border-solid";
     return "border-gray-400 border-dashed";
   })();
 
@@ -257,73 +707,54 @@ const BiometricCaptureWidget = ({
   const arcCirc = 2 * Math.PI * arcRadius;
   const arcDashOffset = arcCirc - (progress / 100) * arcCirc;
 
+  const initializing = !modelLoaded || !videoReady;
+  const displayMessage = initializing
+    ? "Initializing camera..."
+    : feedback.message;
+
   return (
     <div className="space-y-5">
-      {/* Stage progress indicator */}
-      <div className="flex items-center justify-center gap-4">
+      {/* Stage indicator */}
+      <div className="flex items-center justify-center gap-3">
         <StageStep
           label="Face Capture"
-          state={
-            faceComplete ? "complete" : stage === "FACE" ? "active" : "pending"
-          }
-          icon="face"
+          state={faceComplete ? "complete" : "active"}
         />
-        <div
-          className={`h-0.5 w-10 ${faceComplete ? "bg-green-500" : "bg-gray-300"}`}
-        />
-        <StageStep
-          label="Fingerprint Capture"
-          state={
-            fingerComplete
-              ? "complete"
-              : stage === "FINGERPRINT"
-                ? "active"
-                : "pending"
-          }
-          icon="fingerprint"
-        />
+        {capturePhase !== "liveness" && capturePhase !== "done" && (
+          <span className="text-xs text-gray-500">
+            {capturedPositions.length}/{CAPTURE_SEQUENCE.length} positions
+          </span>
+        )}
       </div>
 
       {/* Frame */}
       <div className="flex flex-col items-center">
-        {stage === "FACE" ? (
-          <div
-            className={`relative border-4 ${frameBorderClass} transition-colors duration-200`}
-            style={{
-              width: 280,
-              height: 360,
-              borderRadius: "50%",
-              ...frameGlow,
-            }}
-          >
-            <svg
-              className="absolute inset-0 w-full h-full"
-              viewBox="0 0 280 360"
-            >
-              <text
-                x="50%"
-                y="50%"
-                textAnchor="middle"
-                className="fill-gray-300"
-                fontSize="80"
-                dominantBaseline="middle"
-              >
-                {feedback.isAllClear ? "✓" : "👤"}
-              </text>
-            </svg>
-          </div>
-        ) : (
-          <div
-            className={`relative border-4 ${frameBorderClass} rounded-md transition-colors duration-200 flex items-center justify-center`}
-            style={{ width: 280, height: 200, ...frameGlow }}
-          >
-            <span className="text-6xl text-gray-300">
-              {feedback.isAllClear ? "✓" : "✋"}
-            </span>
-          </div>
-        )}
+        <div
+          className={`relative overflow-hidden border-4 ${frameBorderClass} transition-colors duration-200 bg-black`}
+          style={{
+            width: 280,
+            height: 360,
+            borderRadius: "50%",
+            ...frameGlow,
+          }}
+        >
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className="absolute inset-0 w-full h-full object-cover"
+            style={{ transform: "scaleX(-1)" }}
+          />
+          <canvas ref={canvasRef} className="hidden" />
+          {initializing && (
+            <div className="absolute inset-0 flex items-center justify-center text-gray-300 text-sm">
+              Initializing camera...
+            </div>
+          )}
+        </div>
 
-        {/* Stability timer arc */}
+        {/* Stability / capture timer arc */}
         <div className="mt-4 relative w-28 h-28">
           <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
             <circle
@@ -358,22 +789,16 @@ const BiometricCaptureWidget = ({
       {/* Instruction text */}
       <div
         className={`p-3 rounded-md text-center text-sm font-medium flex items-center justify-center gap-2 ${
-          feedback.isAllClear
+          feedback.isAllClear && !initializing
             ? "bg-green-50 text-green-700 border border-green-200"
             : "bg-amber-50 text-amber-800 border border-amber-200"
         }`}
       >
-        <span className="text-base">{feedback.isAllClear ? "✓" : "⚠"}</span>
-        <span>{feedback.message}</span>
+        <span className="text-base">
+          {feedback.isAllClear && !initializing ? "✓" : "⚠"}
+        </span>
+        <span>{displayMessage}</span>
       </div>
-
-      {/* Sub-step indicator for fingerprints */}
-      {stage === "FINGERPRINT" && !fingerComplete && (
-        <p className="text-center text-xs text-gray-500">
-          Step {fingerStepIdx + 1} of {FINGER_SEQUENCE.length} —{" "}
-          {FINGER_SEQUENCE[fingerStepIdx]}
-        </p>
-      )}
     </div>
   );
 };
@@ -383,11 +808,9 @@ const BiometricCaptureWidget = ({
 const StageStep = ({
   label,
   state,
-  icon,
 }: {
   label: string;
   state: "active" | "complete" | "pending";
-  icon: "face" | "fingerprint";
 }) => {
   const colorClasses =
     state === "complete"
@@ -400,9 +823,7 @@ const StageStep = ({
     <div
       className={`flex items-center gap-2 px-3 py-1.5 rounded-full border ${colorClasses}`}
     >
-      <span className="text-base">
-        {state === "complete" ? "✓" : icon === "face" ? "😊" : "👆"}
-      </span>
+      <span className="text-base">{state === "complete" ? "✓" : "😊"}</span>
       <span className="text-xs font-medium">{label}</span>
     </div>
   );

@@ -3,6 +3,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import { authService } from "../services/authService";
 import {
   applicationService,
+  inferIdentityDocumentType,
+  type IdentityDocumentType,
   type PassportApplication,
 } from "../services/applicationService";
 import { documentService } from "../services/documentService";
@@ -17,6 +19,9 @@ const isValidPhoto = (f: File) => ALLOWED_PHOTO_EXTS.includes(getExt(f));
 
 interface DocumentFiles {
   identityDocument: File | null;
+  frontUrl: File | null;
+  backUrl: File | null;
+  civilRegistryExtract: File | null;
   passportPhoto: File | null;
   oldPassport: File | null;
 }
@@ -28,6 +33,21 @@ const ACCEPTANCE_CRITERIA: Record<DocumentField, string[]> = {
     "Lebanese National ID Card or Civil Registry Extract",
     "Issued less than 3 months ago",
     "QR code on the document is scannable",
+  ],
+  frontUrl: [
+    "Front side of the Lebanese National ID Card",
+    "Image is clear and uncropped",
+    "All printed text is readable",
+  ],
+  backUrl: [
+    "Back side of the Lebanese National ID Card",
+    "Image is clear and uncropped",
+    "All printed text is readable",
+  ],
+  civilRegistryExtract: [
+    "Civil Registry Extract issued less than 3 months ago",
+    "QR code on the document is scannable",
+    "All printed text is readable",
   ],
   passportPhoto: [
     "3.5 × 4.5 cm",
@@ -89,6 +109,26 @@ const FieldGuidance = ({
   </div>
 );
 
+const getIdentityResubmissionFields = (
+  app: PassportApplication,
+): DocumentField[] => {
+  const type: IdentityDocumentType | null =
+    app.identityDocumentType ?? inferIdentityDocumentType(app.documents);
+
+  if (type === "NATIONAL_ID") return ["frontUrl", "backUrl"];
+  if (type === "CIVIL_REGISTRY_EXTRACT") return ["civilRegistryExtract"];
+  return ["identityDocument"];
+};
+
+const IDENTITY_FIELD_LABELS: Record<DocumentField, string> = {
+  identityDocument: "Identity Document",
+  frontUrl: "National ID Front",
+  backUrl: "National ID Back",
+  civilRegistryExtract: "Civil Registry Extract",
+  passportPhoto: "Passport Photo",
+  oldPassport: "Old Passport Scan",
+};
+
 const DocumentResubmissionPage = () => {
   const navigate = useNavigate();
   const { applicationId } = useParams<{ applicationId: string }>();
@@ -98,6 +138,9 @@ const DocumentResubmissionPage = () => {
   const [notFound, setNotFound] = useState(false);
   const [documents, setDocuments] = useState<DocumentFiles>({
     identityDocument: null,
+    frontUrl: null,
+    backUrl: null,
+    civilRegistryExtract: null,
     passportPhoto: null,
     oldPassport: null,
   });
@@ -158,10 +201,15 @@ const DocumentResubmissionPage = () => {
     setDocuments((prev) => ({ ...prev, [field]: null }));
   };
 
+  const identityFields = getIdentityResubmissionFields(app);
+
   const handleResubmit = async () => {
     const errs: Record<string, string> = {};
-    if (!documents.identityDocument)
-      errs.identityDocument = "Identity document is required.";
+    identityFields.forEach((field) => {
+      if (!documents[field]) {
+        errs[field] = `${IDENTITY_FIELD_LABELS[field]} is required.`;
+      }
+    });
     if (!documents.passportPhoto)
       errs.passportPhoto = "Passport photo is required.";
     if (app.applicationType === "RENEWAL" && !documents.oldPassport)
@@ -282,25 +330,34 @@ const DocumentResubmissionPage = () => {
             Upload Documents
           </h2>
 
-          <div>
-            <FieldGuidance
-              field="identityDocument"
-              reason={app.resubmissionReasons?.identityDocument}
-            />
-            <EnhancedFileUploadField
-              id="resubmit-identityDocument"
-              label="Identity Document"
-              accept=".pdf,.jpg,.jpeg,.png"
-              acceptLabel="PDF, JPG, PNG"
-              file={documents.identityDocument}
-              stepError={fieldErrors.identityDocument}
-              required
-              validator={isValidDoc}
-              typeErrorMsg="Only PDF, JPG, and PNG files are accepted."
-              onChange={(f) => handleFileChange("identityDocument", f)}
-              onClear={() => clearFile("identityDocument")}
-            />
-          </div>
+          {identityFields.map((field) => {
+            const imageOnly = field === "frontUrl" || field === "backUrl";
+            return (
+              <div key={field}>
+                <FieldGuidance
+                  field={field}
+                  reason={app.resubmissionReasons?.[field]}
+                />
+                <EnhancedFileUploadField
+                  id={`resubmit-${field}`}
+                  label={IDENTITY_FIELD_LABELS[field]}
+                  accept={imageOnly ? ".jpg,.jpeg,.png" : ".pdf,.jpg,.jpeg,.png"}
+                  acceptLabel={imageOnly ? "JPG, PNG" : "PDF, JPG, PNG"}
+                  file={documents[field]}
+                  stepError={fieldErrors[field]}
+                  required
+                  validator={imageOnly ? isValidPhoto : isValidDoc}
+                  typeErrorMsg={
+                    imageOnly
+                      ? "Only JPG and PNG image files are accepted."
+                      : "Only PDF, JPG, and PNG files are accepted."
+                  }
+                  onChange={(f) => handleFileChange(field, f)}
+                  onClear={() => clearFile(field)}
+                />
+              </div>
+            );
+          })}
 
           <div>
             <FieldGuidance

@@ -14,6 +14,7 @@ import { DeliveryModule } from './delivery/delivery.module';
 import { AuditModule } from './audit/audit.module';
 import { PassportsModule } from './passports/passports.module';
 import { DocumentsModule } from './documents/documents.module';
+import { StorageModule } from './storage/storage.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { DocumentsModule } from './documents/documents.module';
     AuditModule,
     PassportsModule,
     DocumentsModule,
+    StorageModule,
   ],
   controllers: [AppController],
   providers: [AppService],

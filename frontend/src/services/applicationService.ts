@@ -9,6 +9,7 @@ import {
 const USE_MOCK = import.meta.env.VITE_USE_MOCK_APPLICATIONS === "true";
 
 export type ApplicationType = "NEW" | "RENEWAL";
+export type IdentityDocumentType = "NATIONAL_ID" | "CIVIL_REGISTRY_EXTRACT";
 
 export type ApplicationStatus =
   | "PENDING_REVIEW"
@@ -34,8 +35,13 @@ export interface PassportApplication {
   passportValidity: 5 | 10;
   feeAmount: number;
   paymentStatus?: "UNPAID" | "Paid" | "Failed";
+  identityDocumentType?: IdentityDocumentType | null;
   documents: {
-    identityDocument: string | null;
+    // Legacy generic identity document field kept for old mock/seeded records.
+    identityDocument?: string | null;
+    frontUrl?: string | null;
+    backUrl?: string | null;
+    civilRegistryExtract?: string | null;
     passportPhoto: string | null;
     oldPassport: string | null;
   };
@@ -55,6 +61,9 @@ export interface PassportApplication {
   // Per-document rejection reasons populated when status is RESUBMISSION_REQUIRED
   resubmissionReasons?: {
     identityDocument?: string;
+    frontUrl?: string;
+    backUrl?: string;
+    civilRegistryExtract?: string;
     passportPhoto?: string;
     oldPassport?: string;
   };
@@ -81,6 +90,14 @@ export const getIdentityForUser = (userId: string): CitizenIdentity | null => {
   } catch {
     return null;
   }
+};
+
+export const inferIdentityDocumentType = (
+  documents: PassportApplication["documents"],
+): IdentityDocumentType | null => {
+  if (documents.frontUrl || documents.backUrl) return "NATIONAL_ID";
+  if (documents.civilRegistryExtract) return "CIVIL_REGISTRY_EXTRACT";
+  return null;
 };
 
 const applicationsKey = (userId: string) => `applications_${userId}`;
@@ -174,6 +191,8 @@ export const applicationService = {
           district: application.mukhtarFormData?.district ?? "",
           mukhtarName: application.mukhtarFormData?.mukhtarName ?? "",
         },
+        identityDocumentType: application.identityDocumentType ?? null,
+        documents: application.documents,
         biometricCaptured: application.biometricCaptured ?? false,
       },
     );

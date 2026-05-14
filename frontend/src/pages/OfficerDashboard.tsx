@@ -3,7 +3,10 @@ import { useNavigate } from "react-router-dom";
 import { authService } from "../services/authService";
 import { officerService } from "../services/officerService";
 import { passportService } from "../services/passportService";
-import type { EnrichedApplication } from "../services/applicationService";
+import {
+  inferIdentityDocumentType,
+  type EnrichedApplication,
+} from "../services/applicationService";
 import type { Passport } from "../types/passport";
 import type { MukhtarSignature } from "../services/mukhtarService";
 
@@ -219,10 +222,13 @@ const ApprovalDetailModal = ({
               Submitted Documents
             </h3>
             <div className="space-y-2">
-              <DocumentLink
-                label="Identity Document"
-                url={app.documents.identityDocument}
-              />
+              {getIdentityDocKeys(app).map((key) => (
+                <DocumentLink
+                  key={key}
+                  label={IDENTITY_DOC_LABELS[key]}
+                  url={app.documents[key] ?? null}
+                />
+              ))}
               <DocumentLink
                 label="Passport Photo"
                 url={app.documents.passportPhoto}
@@ -345,6 +351,28 @@ const DocumentLink = ({
       )}
     </div>
   );
+};
+
+type IdentityDocKey =
+  | "identityDocument"
+  | "frontUrl"
+  | "backUrl"
+  | "civilRegistryExtract";
+
+const IDENTITY_DOC_LABELS: Record<IdentityDocKey, string> = {
+  identityDocument: "Identity Document",
+  frontUrl: "National ID Front",
+  backUrl: "National ID Back",
+  civilRegistryExtract: "Civil Registry Extract",
+};
+
+const getIdentityDocKeys = (
+  app: EnrichedApplication["app"],
+): IdentityDocKey[] => {
+  const type = app.identityDocumentType ?? inferIdentityDocumentType(app.documents);
+  if (type === "NATIONAL_ID") return ["frontUrl", "backUrl"];
+  if (type === "CIVIL_REGISTRY_EXTRACT") return ["civilRegistryExtract"];
+  return ["identityDocument"];
 };
 
 // ─── Approval Confirmation Modal ──────────────────────────────────────────────

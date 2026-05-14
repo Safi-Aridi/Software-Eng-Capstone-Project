@@ -97,6 +97,12 @@ const parseResubmissionReasons = (
       typeof input.identityDocument === "string"
         ? input.identityDocument
         : undefined,
+    frontUrl: typeof input.frontUrl === "string" ? input.frontUrl : undefined,
+    backUrl: typeof input.backUrl === "string" ? input.backUrl : undefined,
+    civilRegistryExtract:
+      typeof input.civilRegistryExtract === "string"
+        ? input.civilRegistryExtract
+        : undefined,
     passportPhoto:
       typeof input.passportPhoto === "string" ? input.passportPhoto : undefined,
     oldPassport:
@@ -135,6 +141,9 @@ const parseDocuments = (value: unknown): PassportApplication["documents"] => {
   if (!value || typeof value !== "object") {
     return {
       identityDocument: null,
+      frontUrl: null,
+      backUrl: null,
+      civilRegistryExtract: null,
       passportPhoto: null,
       oldPassport: null,
     };
@@ -144,10 +153,24 @@ const parseDocuments = (value: unknown): PassportApplication["documents"] => {
   return {
     identityDocument:
       typeof obj.identityDocument === "string" ? obj.identityDocument : null,
+    frontUrl: typeof obj.frontUrl === "string" ? obj.frontUrl : null,
+    backUrl: typeof obj.backUrl === "string" ? obj.backUrl : null,
+    civilRegistryExtract:
+      typeof obj.civilRegistryExtract === "string"
+        ? obj.civilRegistryExtract
+        : null,
     passportPhoto:
       typeof obj.passportPhoto === "string" ? obj.passportPhoto : null,
     oldPassport: typeof obj.oldPassport === "string" ? obj.oldPassport : null,
   };
+};
+
+const inferIdentityDocumentTypeFromDocuments = (
+  documents: PassportApplication["documents"],
+): PassportApplication["identityDocumentType"] => {
+  if (documents.frontUrl || documents.backUrl) return "NATIONAL_ID";
+  if (documents.civilRegistryExtract) return "CIVIL_REGISTRY_EXTRACT";
+  return null;
 };
 
 export const mapApiApplicationToFrontend = (raw: unknown): PassportApplication => {
@@ -155,6 +178,7 @@ export const mapApiApplicationToFrontend = (raw: unknown): PassportApplication =
   const currentStatus = backendStatusToFrontend(
     (c.currentStatus as string) ?? "Pending",
   ) as PassportApplication["currentStatus"];
+  const documents = parseDocuments(c.documents);
   return {
     applicationId: (c.applicationId as string) ?? "",
     userId: (c.citizenId as string) ?? "",
@@ -167,12 +191,17 @@ export const mapApiApplicationToFrontend = (raw: unknown): PassportApplication =
     paymentStatus: backendPaymentStatusToFrontend(
       (c.paymentStatus as string) ?? "Pending",
     ) as PassportApplication["paymentStatus"],
+    identityDocumentType:
+      c.identityDocumentType === "NATIONAL_ID" ||
+      c.identityDocumentType === "CIVIL_REGISTRY_EXTRACT"
+        ? c.identityDocumentType
+        : inferIdentityDocumentTypeFromDocuments(documents),
     renewingPassportId: null,
     resubmissionReasons: parseResubmissionReasons(
       c.resubmissionReasons,
       currentStatus,
     ),
-    documents: parseDocuments(c.documents),
+    documents,
     mukhtarFormData: parseMukhtarFormData(c.mukhtarFormData),
     biometricCaptured: false,
   };

@@ -15,10 +15,19 @@ type UploadFile = {
   size: number;
 };
 
-type FrontendDocumentType = 'identityDocument' | 'passportPhoto' | 'oldPassport';
+type FrontendDocumentType =
+  | 'identityDocument'
+  | 'frontUrl'
+  | 'backUrl'
+  | 'civilRegistryExtract'
+  | 'passportPhoto'
+  | 'oldPassport';
 
 const DOCUMENT_TYPE_TO_DB: Record<FrontendDocumentType, string> = {
   identityDocument: 'identity_document',
+  frontUrl: 'national_id_front',
+  backUrl: 'national_id_back',
+  civilRegistryExtract: 'civil_registry_extract',
   passportPhoto: 'passport_photo',
   oldPassport: 'old_passport',
 };
@@ -27,6 +36,12 @@ const ALLOWED_MIME_TYPES = new Set([
   'application/pdf',
   'image/jpeg',
   'image/png',
+]);
+
+const IMAGE_ONLY_DOCUMENT_TYPES = new Set([
+  'national_id_front',
+  'national_id_back',
+  'passport_photo',
 ]);
 
 @Injectable()
@@ -43,6 +58,9 @@ export class DocumentsService {
 
     if (
       value === 'identity_document' ||
+      value === 'national_id_front' ||
+      value === 'national_id_back' ||
+      value === 'civil_registry_extract' ||
       value === 'passport_photo' ||
       value === 'old_passport'
     ) {
@@ -160,6 +178,13 @@ export class DocumentsService {
     await this.assertUploadAccess(applicationId, user);
 
     const documentType = this.normalizeDocumentType(requestedDocumentType);
+    if (
+      IMAGE_ONLY_DOCUMENT_TYPES.has(documentType) &&
+      !file.mimetype.startsWith('image/')
+    ) {
+      throw new BadRequestException('This document type must be an image file');
+    }
+
     const { supabaseUrl, serviceRoleKey, bucket } = this.getStorageConfig();
     const safeName = this.sanitizeFileName(file.originalname);
     const objectPath = [

@@ -14,7 +14,7 @@ const NEW_ITEMS: ChecklistItem[] = [
     id: "id_or_extract",
     title: "Lebanese National ID Card or Civil Registry Extract",
     detail:
-      "Issued less than 3 months ago. The QR code on the document must be scannable.",
+      "National ID requires front and back images. Extract must be issued less than 3 months ago with a scannable QR code.",
   },
   {
     id: "passport_photo",
@@ -34,7 +34,8 @@ const RENEWAL_ITEMS: ChecklistItem[] = [
   {
     id: "id_or_extract",
     title: "Lebanese National ID Card or Civil Registry Extract",
-    detail: "Issued less than 3 months ago.",
+    detail:
+      "National ID requires front and back images. Extract must be issued less than 3 months ago.",
   },
   {
     id: "passport_photo",

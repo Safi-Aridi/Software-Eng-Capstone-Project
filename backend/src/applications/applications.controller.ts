@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  Patch,
   Post,
   Put,
   Query,
@@ -85,6 +86,19 @@ export class ApplicationsController {
   @Roles('officer')
   cancelOldPassport(@Param('id') id: string, @Body() body: any) {
     return this.applicationsService.cancelOldPassport(id, body);
+  }
+
+  @Patch(':id/biometric-frames')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('citizen')
+  updateBiometricFrames(
+    @Param('id') id: string,
+    @Body() body: { frameUrls: string[] },
+  ) {
+    return this.applicationsService.updateBiometricFrameUrls(
+      id,
+      body.frameUrls,
+    );
   }
 
   @Post(':id/issue')

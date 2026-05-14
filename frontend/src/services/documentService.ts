@@ -12,6 +12,9 @@ type UploadResponse = {
 
 const FIELD_TO_BACKEND_TYPE: Record<DocumentField, string> = {
   identityDocument: "identity_document",
+  frontUrl: "national_id_front",
+  backUrl: "national_id_back",
+  civilRegistryExtract: "civil_registry_extract",
   passportPhoto: "passport_photo",
   oldPassport: "old_passport",
 };
@@ -42,6 +45,9 @@ export const documentService = {
   ): Promise<PassportApplication["documents"]> => {
     const uploaded: PassportApplication["documents"] = {
       identityDocument: null,
+      frontUrl: null,
+      backUrl: null,
+      civilRegistryExtract: null,
       passportPhoto: null,
       oldPassport: null,
     };

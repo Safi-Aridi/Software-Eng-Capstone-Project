@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
-import type { ApplicationStatus, PassportApplication } from "../services/applicationService";
+import {
+  inferIdentityDocumentType,
+  type ApplicationStatus,
+  type PassportApplication,
+} from "../services/applicationService";
 import { reseedTestData } from "../services/seedTestData";
 import { passportService } from "../services/passportService";
 
@@ -100,9 +104,18 @@ const DevStatusPanel = () => {
     const updated: PassportApplication = { ...selected, currentStatus: status };
 
     if (status === "RESUBMISSION_REQUIRED") {
-      updated.resubmissionReasons = {
-        identityDocument: "Photo on ID does not match passport photo",
-      };
+      const identityDocumentType =
+        selected.identityDocumentType ??
+        inferIdentityDocumentType(selected.documents);
+      updated.resubmissionReasons =
+        identityDocumentType === "NATIONAL_ID"
+          ? { frontUrl: "Photo on ID does not match passport photo" }
+          : identityDocumentType === "CIVIL_REGISTRY_EXTRACT"
+            ? {
+                civilRegistryExtract:
+                  "Extract details do not match the application",
+              }
+            : { identityDocument: "Photo on ID does not match passport photo" };
     } else {
       updated.resubmissionReasons = undefined;
     }
