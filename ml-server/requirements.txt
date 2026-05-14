@@ -1,0 +1,18 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.2.2
+torchvision==0.17.2
+fastapi
+uvicorn[standard]
+easyocr
+opencv-python-headless
+pydantic
+httpx
+numpy
+pillow
+deepface
+tf-keras
+ultralytics
+python-multipart
+supabase
+python-dotenv
+scikit-image
