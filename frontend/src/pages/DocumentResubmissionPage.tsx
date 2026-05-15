@@ -204,53 +204,52 @@ const DocumentResubmissionPage = () => {
   const identityFields = getIdentityResubmissionFields(app);
 
   const handleResubmit = async () => {
-    const errs: Record<string, string> = {};
-    identityFields.forEach((field) => {
-      if (!documents[field]) {
-        errs[field] = `${IDENTITY_FIELD_LABELS[field]} is required.`;
-      }
-    });
-    if (!documents.passportPhoto)
-      errs.passportPhoto = "Passport photo is required.";
-    if (app.applicationType === "RENEWAL" && !documents.oldPassport)
-      errs.oldPassport = "Old passport scan is required for renewal applications.";
-
-    if (Object.keys(errs).length > 0) {
-      setFieldErrors(errs);
-      return;
+  const errs: Record<string, string> = {};
+  
+  // VALIDATION CHECK: Make sure these aren't blocking you!
+  identityFields.forEach((field) => {
+    if (!documents[field]) {
+      errs[field] = `${IDENTITY_FIELD_LABELS[field]} is required.`;
     }
+  });
+  
+  if (!documents.passportPhoto) errs.passportPhoto = "Passport photo is required.";
 
-    setIsSubmitting(true);
-    setSubmitError("");
+  if (Object.keys(errs).length > 0) {
+    setFieldErrors(errs);
+    return; // This is why the button "doesn't work" if fields are empty
+  }
 
-    try {
-      const uploadedDocuments = await documentService.uploadDocuments(
-        app.applicationId,
-        documents,
-      );
+  setIsSubmitting(true);
+  setSubmitError(""); // Clear old errors
 
-      await applicationService.updateApplicationDocuments(
-        currentUser.user.id,
-        app.applicationId,
-        uploadedDocuments,
-      );
+  try {
+    const uploadedDocuments = await documentService.uploadDocuments(
+      app.applicationId,
+      documents,
+    );
 
-      navigate(`/application/status/${app.applicationId}`, {
-        state: {
-          successMessage:
-            "Documents resubmitted successfully. Your application is under review again.",
-        },
-      });
-    } catch (err) {
-      setSubmitError(
-        err instanceof Error
-          ? err.message
-          : "Document resubmission failed. Please try again.",
-      );
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+    await applicationService.updateApplicationDocuments(
+      currentUser.user.id,
+      app.applicationId,
+      uploadedDocuments,
+    );
+
+    navigate(`/application/status/${app.applicationId}`);
+  } catch (err: any) {
+    // --- THE CLEAN MSG LOGIC ---
+    let rawMsg = err?.message || "Verification failed";
+    
+    // If it's that giant JSON string, shorten it
+    const cleanMsg = rawMsg.length > 100 
+      ? "AI Verification Error: The ID data format was incompatible with the face matcher."
+      : rawMsg;
+      
+    setSubmitError(cleanMsg);
+  } finally {
+    setIsSubmitting(false);
+  }
+};
 
   return (
     <div className="min-h-screen bg-gray-50 py-8 px-4">

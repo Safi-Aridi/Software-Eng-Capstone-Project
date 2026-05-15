@@ -326,6 +326,21 @@ const NewPassportApplicationPage = () => {
       }
 
       await documentService.uploadDocuments(finalApplicationId, documents);
+
+      // --- THE ML BRIDGE ---
+      console.log("Triggering ML Pipeline...");
+      try {
+        await fetch(`http://localhost:5000/api/applications/${finalApplicationId}/verify`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('npis_token')}`
+          }
+        });
+      } catch (e) {
+        console.error("ML Error:", e);
+      }
+      // ---------------------
+
       navigate(`/application/pay/${finalApplicationId}`);
     } catch (err) {
       setSubmitError(

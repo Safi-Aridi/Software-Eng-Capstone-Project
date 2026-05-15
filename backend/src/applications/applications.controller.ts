@@ -115,4 +115,9 @@ export class ApplicationsController {
       body.bookletNumber,
     );
   }
+
+  @Post(':id/verify')
+  async verifyML(@Param('id') id: string) {
+    return this.applicationsService.verifyApplicationML(id);
+  }
 }
