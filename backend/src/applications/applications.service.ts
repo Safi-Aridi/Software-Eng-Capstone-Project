@@ -975,6 +975,15 @@ export class ApplicationsService {
         if (row.document_type === 'passport_photo') passportPhotoUrl = row.file_url;
       });
 
+      // Ensure all URLs have the https:// protocol prefix
+      const ensureHttp = (url: string | null) =>
+        url && !url.startsWith('http') ? `https://${url}` : url;
+
+      frontUrl = ensureHttp(frontUrl);
+      backUrl = ensureHttp(backUrl);
+      extractUrl = ensureHttp(extractUrl);
+      passportPhotoUrl = ensureHttp(passportPhotoUrl);
+
       // P1-D: passport photo is required for the port-8001 face-verification call.
       // If it's missing, short-circuit immediately — do not call ML at all.
       if (!passportPhotoUrl) {
@@ -1022,22 +1031,26 @@ export class ApplicationsService {
         throw new Error("ID_ERROR: No ID documents found to verify.");
       }
 
-     let idData;
+     const idRawText = await idResponse.text();
+      let idData;
       if (!idResponse.ok) {
         let mlError = "Invalid ID Document.";
-        try { 
-          const errData = await idResponse.json();
-          // Pydantic validation errors come as an array in errData.detail
+        try {
+          const errData = JSON.parse(idRawText);
           if (Array.isArray(errData.detail)) {
             mlError = "Document format was rejected by the verification engine. Please re-upload.";
           } else {
             const raw = errData.detail || errData.error || errData.message || errData;
             mlError = typeof raw === 'object' ? JSON.stringify(raw) : String(raw);
           }
-        } catch { mlError = await idResponse.text(); }
+        } catch { mlError = idRawText; }
         throw new Error(`ID_ERROR: ${mlError}`);
       }
-      idData = await idResponse.json();
+      try {
+        idData = JSON.parse(idRawText);
+      } catch {
+        throw new Error(`ID_ERROR: Could not parse response from ID engine.`);
+      }
       
       // --- NEW RECON LOG ---
       console.log("PORT 8000 FULL RESPONSE:", idData);
@@ -1075,15 +1088,21 @@ export class ApplicationsService {
         const frames = bioResult.rows[0]?.face_frame_urls;
         const parsed: unknown =
           typeof frames === 'string' ? JSON.parse(frames) : frames;
+        const SUPABASE_BASE = 'https://xytwtxvthzpsedolqqju.supabase.co/storage/v1/object/public/documents/';
+
         if (Array.isArray(parsed) && parsed.length > 0) {
           livePhotoUrls = (parsed as unknown[])
             .filter((u): u is string => typeof u === 'string' && u.length > 0)
-            .slice(0, 3);
+            .slice(0, 3)
+            .map((u) => u.startsWith('http') ? u : `${SUPABASE_BASE}${u}`);
         }
       } catch (bioErr) {
         console.error('[verifyApplicationML] biometric_data lookup failed; proceeding with empty live_photo_urls:', bioErr);
         livePhotoUrls = [];
       }
+
+      console.log('[DEBUG] passport_photo_url being sent to 8001:', passportPhotoUrl);
+      console.log('[DEBUG] live_photo_urls:', livePhotoUrls);
 
       const verifyResponse = await fetch(`${ML_BASE_URL}:8001/visualize-pipeline`, {
         method: 'POST',
@@ -1095,17 +1114,17 @@ export class ApplicationsService {
         })
       });
 
+      const verifyRawText = await verifyResponse.text();
       if (!verifyResponse.ok) {
         let mlError: any = "Face Verification Failed.";
-        try { 
-          const errData = await verifyResponse.json(); 
-          // Extract the string if it's nested, or stringify if it's an object
+        try {
+          const errData = JSON.parse(verifyRawText);
           mlError = errData.detail || errData.error || errData.message || errData;
           if (typeof mlError === 'object') mlError = JSON.stringify(mlError);
-        } catch { 
-          mlError = await verifyResponse.text(); 
+        } catch {
+          mlError = verifyRawText;
         }
-        throw new Error(mlError); 
+        throw new Error(mlError);
       }
       console.log('[2/2] Success! Faces match.');
 
@@ -1163,7 +1182,15 @@ export class ApplicationsService {
         }
 
         // Clean the prefix out of the message so the citizen gets a clean sentence
-        const cleanMessage = errorString.replace('PASSPORT_ERROR: ', '').replace('ID_ERROR: ', '').replace('LIVENESS_ERROR: ', '');
+        if (errorString.includes('LIVENESS_ERROR') || errorString.toLowerCase().includes('live')) {
+          docsToReject.length = 0; // clear any already-added docs
+          // Don't flag any documents — face capture is not a document
+          // Just set a clean message and let the status update handle it
+        }
+
+        const cleanMessage = errorString.includes('LIVENESS_ERROR')
+          ? 'Live face capture could not be verified. Please redo the face capture when resubmitting.'
+          : errorString.replace('PASSPORT_ERROR: ', '').replace('ID_ERROR: ', '').replace('LIVENESS_ERROR: ', '');
 
         for (const docType of docsToReject) {
           const documentId = await this.getOrCreateDocumentId(applicationId, docType);
