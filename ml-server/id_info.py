@@ -23,8 +23,10 @@ vertexai.init(project="project-7648918a-4e32-4422-9be", location="us-central1")
 gemini_model = GenerativeModel("gemini-2.5-flash")
 
 class DocumentRequest(BaseModel):
-    front_url: str
-    back_url: str
+    document_type: str = "id_card"
+    front_url: str | None = None
+    back_url: str | None = None
+    document_url: str | None = None
 
 # ==========================================
 # HELPER: QR CODE SCANNER (DETERMINISTIC)
@@ -212,11 +214,12 @@ async def extract_id_data(request: DocumentRequest):
                 # If the AI failed to format the date correctly due to OCR damage
                 pass 
 
-        # --- 6. BIOMETRIC FACE CROP (High-Assurance) ---
+        # --- 6. BIOMETRIC FACE CROP (High-Assurance with cascade fallback) ---
         img = cv2.imdecode(np.frombuffer(f_resp.content, np.uint8), cv2.IMREAD_COLOR)
-        
-        res = face_detector(img, classes=[0], conf=0.25)
         face_b64 = None
+
+        # Try YOLO first (general person detector, conf lowered for ID crops)
+        res = face_detector(img, classes=[0], conf=0.15)
         
         if res and len(res[0].boxes) > 0:
             b = res[0].boxes[0].xyxy[0].cpu().numpy().astype(int)
@@ -224,9 +227,20 @@ async def extract_id_data(request: DocumentRequest):
             _, buffer = cv2.imencode('.jpg', crop)
             face_b64 = f"data:image/jpeg;base64,{base64.b64encode(buffer).decode('utf-8')}"
         else:
-            raise HTTPException(status_code=400, detail="Could not detect a clear human face on the document.")
-
-        return {
+            # Fallback: OpenCV Haar Cascade (great for ID card frontal faces)
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+            faces = face_cascade.detectMultiScale(gray, scaleFactor=1.05, minNeighbors=3, minSize=(30, 30))
+            
+            if len(faces) > 0:
+                # Pick largest face
+                x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+                crop = img[max(0, y-15):y+h+15, max(0, x-15):x+w+15]
+                _, buffer = cv2.imencode('.jpg', crop)
+                face_b64 = f"data:image/jpeg;base64,{base64.b64encode(buffer).decode('utf-8')}"
+            else:
+                raise HTTPException(status_code=400, detail="ID_ERROR: Could not detect a clear human face on the document. Please upload a clearer, uncropped image of your ID front.")        
+            return {
             "status": "success", 
             "document_detected": doc_type,
             "data": {**final_json, "id_photo_base64": face_b64}
@@ -235,4 +249,4 @@ async def extract_id_data(request: DocumentRequest):
     except HTTPException as he:
         raise he
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": f"ID_ERROR: {str(e)}"}    

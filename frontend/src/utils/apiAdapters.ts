@@ -19,6 +19,9 @@ export const snakeToCamel = (obj: unknown): unknown => {
 
 const STATUS_B2F: Record<string, string> = {
   "Pending": "PENDING_REVIEW",
+  "Fingerprint Required": "FINGERPRINT_REQUIRED",
+  // Legacy: any rows still in 'Verified' (pre-migration 007) map to the new
+  // FINGERPRINT_REQUIRED bucket so they keep displaying correctly.
   "Verified": "VERIFIED",
   "Mukhtar Signed": "MUKHTAR_SIGNED",
   "Processed for Issuance": "PROCESSED",
@@ -30,6 +33,7 @@ const STATUS_B2F: Record<string, string> = {
 
 const STATUS_F2B: Record<string, string> = {
   "PENDING_REVIEW": "Pending",
+  "FINGERPRINT_REQUIRED": "Fingerprint Required",
   "VERIFIED": "Verified",
   "MUKHTAR_SIGNED": "Mukhtar Signed",
   "PROCESSED": "Processed for Issuance",
@@ -126,7 +130,12 @@ const parseMukhtarFormData = (
         })()
       : value;
   if (!parsed || typeof parsed !== "object") {
-    return { address: "", district: "", mukhtarName: "" };
+    return {
+      address: "",
+      district: "",
+      mukhtarName: "",
+      selectedMukhtarId: "",
+    };
   }
   const obj = parsed as Record<string, unknown>;
   return {
@@ -134,6 +143,8 @@ const parseMukhtarFormData = (
     district: typeof obj.district === "string" ? obj.district : "",
     mukhtarName:
       typeof obj.mukhtarName === "string" ? obj.mukhtarName : "",
+    selectedMukhtarId:
+      typeof obj.selectedMukhtarId === "string" ? obj.selectedMukhtarId : "",
   };
 };
 

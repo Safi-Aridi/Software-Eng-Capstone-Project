@@ -1,6 +1,7 @@
 import {
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
@@ -237,7 +238,7 @@ export class ApplicationsService {
     }
 
     if (user.role === 'mukhtar') {
-      clauses.push("a.current_status = 'Verified'");
+      clauses.push("a.current_status = 'Fingerprint Required'");
       return;
     }
 
@@ -269,6 +270,21 @@ export class ApplicationsService {
     }
   }
 
+  // P4-D: Mukhtar queue, filtered by the logged-in mukhtar's user_id.
+  // Applications with NULL assigned_mukhtar_id (legacy data) intentionally
+  // never surface in any mukhtar's queue — they would have to be reassigned
+  // by an admin first.
+  async findMukhtarQueue(mukhtarUserId: string) {
+    const query = `
+      ${this.applicationSelect}
+      WHERE a.current_status = 'Fingerprint Required'
+        AND a.assigned_mukhtar_id = $1
+      ORDER BY a.created_at DESC
+    `;
+    const result = await this.databaseService.query(query, [mukhtarUserId]);
+    return result.rows;
+  }
+
   async findAll(role?: string, user?: AuthUser) {
     let query = this.applicationSelect;
     const params: unknown[] = [];
@@ -279,7 +295,7 @@ export class ApplicationsService {
         : undefined;
 
     if (effectiveRole === 'mukhtar') {
-      clauses.push("a.current_status = 'Verified'");
+      clauses.push("a.current_status = 'Fingerprint Required'");
     } else if (effectiveRole === 'officer') {
       clauses.push("a.current_status = 'Mukhtar Signed'");
     } else {
@@ -336,9 +352,10 @@ export class ApplicationsService {
         application_type,
         current_status,
         payment_status,
-        tracking_number
+        tracking_number,
+        assigned_mukhtar_id
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *
     `;
 
@@ -355,6 +372,9 @@ export class ApplicationsService {
       'Pending',
       'Pending',
       trackingNumber,
+      // P4-C: persist the citizen's selected mukhtar so the mukhtar queue can
+      // filter by it. Null is acceptable (legacy behavior).
+      body.assignedMukhtarId ?? null,
     ]);
 
     const created = result.rows[0];
@@ -608,6 +628,13 @@ export class ApplicationsService {
       console.error('[applications.resubmitDocuments] mukhtar notify failed:', err);
     }
 
+    // Fire ML verification async — same as initial submission.
+    // Non-blocking: resubmission is accepted regardless; ML will
+    // flip the status to Fingerprint Required or Resubmission Required on its own.
+    this.verifyApplicationML(id).catch((err) =>
+      console.error('[resubmitDocuments] ML pipeline error:', err),
+    );
+
     return {
       success: true,
       message: 'Documents resubmitted successfully',
@@ -853,6 +880,62 @@ export class ApplicationsService {
     };
   }
 
+  // P2-A: ID extraction (port 8000) called synchronously after the application
+  // is created so the citizen sees the parsed identity fields in Step 6 review.
+  // Document storage uses 'national_id_front'/'national_id_back' for id_card
+  // and 'civil_registry_extract' for civil_registry — this matches what the ML
+  // server expects on port 8000 (front_url+back_url OR document_url).
+  async extractIdData(
+    applicationId: string,
+    documentType: 'id_card' | 'civil_registry',
+  ): Promise<unknown> {
+    const ML_BASE_URL = process.env.ML_BASE_URL ?? 'http://64.227.163.65';
+
+    const docs = await this.databaseService.query(
+      `SELECT document_type, file_url FROM documents WHERE application_id = $1`,
+      [applicationId],
+    );
+
+    let payload: Record<string, string>;
+    if (documentType === 'id_card') {
+      const front = docs.rows.find((r: any) => r.document_type === 'national_id_front')?.file_url;
+      const back = docs.rows.find((r: any) => r.document_type === 'national_id_back')?.file_url;
+      if (!front || !back) {
+        throw new NotFoundException('Identity document not uploaded yet');
+      }
+      payload = { document_type: 'id_card', front_url: front, back_url: back };
+    } else {
+      const extract = docs.rows.find(
+        (r: any) => r.document_type === 'civil_registry_extract',
+      )?.file_url;
+      if (!extract) {
+        throw new NotFoundException('Identity document not uploaded yet');
+      }
+      payload = { document_type: 'civil_registry', document_url: extract };
+    }
+
+    try {
+      const res = await fetch(`${ML_BASE_URL}:8000/extract-id-data`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => res.statusText);
+        console.error(`[extractIdData] ML port 8000 ${res.status}: ${errText}`);
+        throw new InternalServerErrorException('Document extraction failed');
+      }
+      const json = await res.json();
+      // ML returns { status: 'success', document_detected, data: {...} }.
+      // Flatten the 'data' payload so the frontend can read fields directly.
+      return json?.data ?? json;
+    } catch (err) {
+      if (err instanceof NotFoundException) throw err;
+      console.error('[extractIdData] ML pipeline error:', err);
+      throw new InternalServerErrorException('Document extraction failed');
+    }
+  }
+
   async updateBiometricFrameUrls(
     applicationId: string,
     frameUrls: string[],
@@ -866,5 +949,236 @@ export class ApplicationsService {
       [applicationId, JSON.stringify(frameUrls)],
     );
     return { success: true };
+  }
+  
+  // --- THE COMPLETE ML VERIFICATION BRIDGE ---
+  async verifyApplicationML(applicationId: string) {
+    console.log('--- STARTING KYC ML PIPELINE ---');
+    const ML_BASE_URL = process.env.ML_BASE_URL ?? 'http://64.227.163.65';
+
+    let frontUrl: string | null = null;
+    let backUrl: string | null = null;
+    let extractUrl: string | null = null;
+    let passportPhotoUrl: string | null = null;
+
+    try {
+      // 1. Pull ALL URLs from the database
+      const docsResult = await this.databaseService.query(
+        `SELECT document_type, file_url FROM documents WHERE application_id = $1`,
+        [applicationId]
+      );
+
+      docsResult.rows.forEach(row => {
+        if (row.document_type === 'national_id_front') frontUrl = row.file_url;
+        if (row.document_type === 'national_id_back') backUrl = row.file_url;
+        if (row.document_type === 'civil_registry_extract') extractUrl = row.file_url;
+        if (row.document_type === 'passport_photo') passportPhotoUrl = row.file_url;
+      });
+
+      // P1-D: passport photo is required for the port-8001 face-verification call.
+      // If it's missing, short-circuit immediately — do not call ML at all.
+      if (!passportPhotoUrl) {
+        console.warn(`[verifyApplicationML] No passport photo for ${applicationId} — short-circuiting to Resubmission Required.`);
+        try {
+          const documentId = await this.getOrCreateDocumentId(applicationId, 'passport_photo');
+          await this.databaseService.query(
+            `INSERT INTO resubmission_requests (application_id, document_id, reason, resolved, requested_at)
+             VALUES ($1, $2, $3, false, now())`,
+            [applicationId, documentId, 'Passport photo is required for verification.']
+          );
+        } catch (dbErr) {
+          console.error('[verifyApplicationML] Failed to insert missing-passport resubmission row:', dbErr);
+        }
+        await this.databaseService.query(
+          `UPDATE applications SET current_status = 'Resubmission Required' WHERE application_id = $1`,
+          [applicationId],
+        );
+        return {
+          success: false,
+          status: 'Resubmission Required',
+          error: 'PASSPORT_ERROR: Passport photo is required for verification.',
+        };
+      }
+
+      // ==========================================
+      // STEP [1/2]: ID EXTRACTION (Port 8000)
+      // ==========================================
+      let idResponse;
+      if (frontUrl && backUrl) {
+        console.log(`[1/2] Sending National ID to ${ML_BASE_URL}:8000...`);
+        idResponse = await fetch(`${ML_BASE_URL}:8000/extract-id-data`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ document_type: 'id_card', front_url: frontUrl, back_url: backUrl })
+        });
+      } else if (extractUrl) {
+        console.log(`[1/2] Sending Civil Extract to ${ML_BASE_URL}:8000...`);
+        idResponse = await fetch(`${ML_BASE_URL}:8000/extract-id-data`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ document_type: 'civil_registry', document_url: extractUrl })
+        });
+      } else {
+        throw new Error("ID_ERROR: No ID documents found to verify.");
+      }
+
+     let idData;
+      if (!idResponse.ok) {
+        let mlError = "Invalid ID Document.";
+        try { 
+          const errData = await idResponse.json();
+          // Pydantic validation errors come as an array in errData.detail
+          if (Array.isArray(errData.detail)) {
+            mlError = "Document format was rejected by the verification engine. Please re-upload.";
+          } else {
+            const raw = errData.detail || errData.error || errData.message || errData;
+            mlError = typeof raw === 'object' ? JSON.stringify(raw) : String(raw);
+          }
+        } catch { mlError = await idResponse.text(); }
+        throw new Error(`ID_ERROR: ${mlError}`);
+      }
+      idData = await idResponse.json();
+      
+      // --- NEW RECON LOG ---
+      console.log("PORT 8000 FULL RESPONSE:", idData);
+      // ---------------------
+
+      // Catch Python "Soft Errors" (200 OK, but status='error')
+      if (idData.status === 'error' || idData.status === 'fail' || idData.status === 'False') {
+        throw new Error(`ID_ERROR: ${idData.message}`);
+      }
+
+      // Extract the YOLO crop base64 (Just in case they put it inside 'message')
+      
+      const idFaceBase64 = idData.id_photo_base64 || idData.face_base64 || idData.cropped_face 
+  || idData.data?.id_photo_base64 || idData.data?.face_base64 || idData.data?.cropped_face;
+  
+      if (!idFaceBase64) {
+        throw new Error("ID_ERROR: The ID engine read your data but couldn't find your photo in the result.");
+      }
+      console.log('[1/2] Success! Face extracted from the ID profile.');
+             
+      // ==========================================
+      // STEP [2/2]: VISUAL VERIFICATION (Port 8001)
+      // ==========================================
+      console.log(`[2/2] Sending Face Verification to ${ML_BASE_URL}:8001...`);
+
+      // P1-E: pull live face frames from biometric_data when present (NEW
+      // applications). Renewals — and any row missing frames — fall through to
+      // the Mode-A "Dev Skip" path on the ML side with an empty array.
+      let livePhotoUrls: string[] = [];
+      try {
+        const bioResult = await this.databaseService.query(
+          `SELECT face_frame_urls FROM biometric_data WHERE application_id = $1`,
+          [applicationId],
+        );
+        const frames = bioResult.rows[0]?.face_frame_urls;
+        const parsed: unknown =
+          typeof frames === 'string' ? JSON.parse(frames) : frames;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          livePhotoUrls = (parsed as unknown[])
+            .filter((u): u is string => typeof u === 'string' && u.length > 0)
+            .slice(0, 3);
+        }
+      } catch (bioErr) {
+        console.error('[verifyApplicationML] biometric_data lookup failed; proceeding with empty live_photo_urls:', bioErr);
+        livePhotoUrls = [];
+      }
+
+      const verifyResponse = await fetch(`${ML_BASE_URL}:8001/visualize-pipeline`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id_face_base64: idFaceBase64,
+          passport_photo_url: passportPhotoUrl,
+          live_photo_urls: livePhotoUrls 
+        })
+      });
+
+      if (!verifyResponse.ok) {
+        let mlError: any = "Face Verification Failed.";
+        try { 
+          const errData = await verifyResponse.json(); 
+          // Extract the string if it's nested, or stringify if it's an object
+          mlError = errData.detail || errData.error || errData.message || errData;
+          if (typeof mlError === 'object') mlError = JSON.stringify(mlError);
+        } catch { 
+          mlError = await verifyResponse.text(); 
+        }
+        throw new Error(mlError); 
+      }
+      console.log('[2/2] Success! Faces match.');
+
+      // ==========================================
+      // FINALIZE: MARK AS FINGERPRINT REQUIRED
+      // ==========================================
+      await this.databaseService.query(
+        `UPDATE applications SET current_status = 'Fingerprint Required' WHERE application_id = $1`,
+        [applicationId],
+      );
+      await this.databaseService.query(
+        `INSERT INTO application_status_history (application_id, old_status, new_status, change_reason)
+         VALUES ($1, 'Pending', 'Fingerprint Required', 'ML verification passed — citizen required to visit branch for physical fingerprint collection')`,
+        [applicationId],
+      );
+
+      // P3-H: notify the citizen that ML passed and they must visit a branch
+      const citizenUserId = await this.getCitizenUserId(applicationId);
+      await this.notify(
+        citizenUserId,
+        applicationId,
+        'Your documents have been verified. Please visit your nearest General Security branch for physical fingerprint collection to proceed with your application.',
+      );
+
+      console.log('--- KYC PIPELINE COMPLETE ---');
+      return { success: true, status: 'Fingerprint Required' };
+
+    } catch (error: any) {
+      console.error('KYC Pipeline Error:', error.message);
+      
+      // THE SMART RESUBMISSION ROUTER
+      try {
+        const docsToReject: string[] = [];
+        const errorString = error.message;
+
+        // Route the error to the correct UI box based on the Python prefix
+        if (errorString.includes('PASSPORT_ERROR')) {
+          docsToReject.push('passport_photo');
+        } else if (errorString.includes('ID_ERROR')) {
+          if (frontUrl) docsToReject.push('national_id_front');
+          if (backUrl) docsToReject.push('national_id_back');
+          if (extractUrl) docsToReject.push('civil_registry_extract');
+        } else {
+          // Fallback: if the error mentions passport, flag passport. 
+          // Otherwise flag whatever was actually submitted (ID docs).
+          const lowerErr = errorString.toLowerCase();
+          if (lowerErr.includes('passport') || lowerErr.includes('photo')) {
+            if (passportPhotoUrl) docsToReject.push('passport_photo');
+          } else {
+            if (frontUrl) docsToReject.push('national_id_front');
+            if (backUrl) docsToReject.push('national_id_back');
+            if (extractUrl) docsToReject.push('civil_registry_extract');
+            if (passportPhotoUrl) docsToReject.push('passport_photo');
+          }
+        }
+
+        // Clean the prefix out of the message so the citizen gets a clean sentence
+        const cleanMessage = errorString.replace('PASSPORT_ERROR: ', '').replace('ID_ERROR: ', '').replace('LIVENESS_ERROR: ', '');
+
+        for (const docType of docsToReject) {
+          const documentId = await this.getOrCreateDocumentId(applicationId, docType);
+          await this.databaseService.query(
+            `INSERT INTO resubmission_requests (application_id, document_id, reason, resolved, requested_at)
+             VALUES ($1, $2, $3, false, now())`,
+            [applicationId, documentId, `AI Verification Failed: ${cleanMessage}`]
+          );
+        }
+      } catch (dbErr) {
+        console.error("Failed to write resubmission reason:", dbErr);
+      }
+
+      await this.databaseService.query(`UPDATE applications SET current_status = 'Resubmission Required' WHERE application_id = $1`, [applicationId]);
+      return { success: false, status: 'Resubmission Required', error: error.message };
+    }
   }
 }

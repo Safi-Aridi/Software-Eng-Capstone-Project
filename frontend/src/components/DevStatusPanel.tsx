@@ -9,7 +9,11 @@ import { passportService } from "../services/passportService";
 
 const STATUS_OPTIONS: { value: ApplicationStatus; label: string; color: string }[] = [
   { value: "PENDING_REVIEW", label: "PENDING_REVIEW", color: "bg-gray-500" },
-  { value: "VERIFIED", label: "VERIFIED", color: "bg-blue-600" },
+  {
+    value: "FINGERPRINT_REQUIRED",
+    label: "Fingerprint Required (Branch Visit)",
+    color: "bg-amber-600",
+  },
   { value: "MUKHTAR_SIGNED", label: "MUKHTAR_SIGNED", color: "bg-purple-600" },
   { value: "PROCESSED", label: "PROCESSED", color: "bg-green-600" },
   { value: "ISSUED", label: "ISSUED", color: "bg-emerald-600" },
