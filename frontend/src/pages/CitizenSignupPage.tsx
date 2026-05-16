@@ -20,6 +20,7 @@ const CitizenSignupPage = () => {
     password: "",
     confirmPassword: "",
   });
+
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [step, setStep] = useState<Step>("FORM");
@@ -27,6 +28,17 @@ const CitizenSignupPage = () => {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
+
+    if (name === "mobileNumber") {
+      if (/^\d*$/.test(value)) {
+        setFormData((prev) => ({
+          ...prev,
+          mobileNumber: value.slice(0, 8),
+        }));
+      }
+      return;
+    }
+
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
@@ -43,6 +55,12 @@ const CitizenSignupPage = () => {
       setError("All fields are required");
       return;
     }
+
+    if (formData.mobileNumber.length !== 8) {
+      setError("Mobile number must contain exactly 8 digits");
+      return;
+    }
+
     if (formData.password !== formData.confirmPassword) {
       setError("Passwords do not match");
       return;
@@ -60,9 +78,11 @@ const CitizenSignupPage = () => {
         email: formData.email,
         password: formData.password,
       });
+
       alert(
         "Account created successfully! Please complete identity verification to use passport services.",
       );
+
       navigate("/identity-verification");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Signup failed");
@@ -105,11 +125,14 @@ const CitizenSignupPage = () => {
                     name="mobileNumber"
                     value={formData.mobileNumber}
                     onChange={handleInputChange}
+                    inputMode="numeric"
+                    maxLength={8}
+                    pattern="[0-9]{8}"
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Enter mobile number"
+                    placeholder="Enter 8-digit mobile number"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    A 6-digit code will be sent to this number
+                    Enter exactly 8 numerical digits
                   </p>
                 </div>
 
@@ -202,7 +225,12 @@ interface OtpStepProps {
   isSubmitting: boolean;
 }
 
-const OtpStep = ({ mobile, onSuccess, onRestart, isSubmitting }: OtpStepProps) => {
+const OtpStep = ({
+  mobile,
+  onSuccess,
+  onRestart,
+  isSubmitting,
+}: OtpStepProps) => {
   const [digits, setDigits] = useState<string[]>(() =>
     Array(OTP_LENGTH).fill(""),
   );
@@ -211,6 +239,7 @@ const OtpStep = ({ mobile, onSuccess, onRestart, isSubmitting }: OtpStepProps) =
   const [errorKind, setErrorKind] = useState<
     "INVALID" | "EXPIRED" | "LOCKED" | null
   >(null);
+
   const inputsRef = useRef<Array<HTMLInputElement | null>>([]);
   const submittedRef = useRef(false);
 
@@ -220,9 +249,11 @@ const OtpStep = ({ mobile, onSuccess, onRestart, isSubmitting }: OtpStepProps) =
 
   useEffect(() => {
     if (secondsLeft <= 0) return;
+
     const id = setInterval(() => {
       setSecondsLeft((s) => (s > 0 ? s - 1 : 0));
     }, 1000);
+
     return () => clearInterval(id);
   }, [secondsLeft]);
 
@@ -237,21 +268,23 @@ const OtpStep = ({ mobile, onSuccess, onRestart, isSubmitting }: OtpStepProps) =
 
   const submit = (entered: string) => {
     if (submittedRef.current) return;
+
     submittedRef.current = true;
     const result = authService.validateOtp(mobile, entered);
+
     if (result === "SUCCESS") {
       setErrorKind(null);
       setErrorMsg("");
       onSuccess();
       return;
     }
+
     if (result === "LOCKED") {
       setErrorKind("LOCKED");
-      setErrorMsg(
-        "Too many incorrect attempts. Please restart registration.",
-      );
+      setErrorMsg("Too many incorrect attempts. Please restart registration.");
       return;
     }
+
     if (result === "EXPIRED") {
       setErrorKind("EXPIRED");
       setErrorMsg("Your code has expired.");
@@ -259,9 +292,10 @@ const OtpStep = ({ mobile, onSuccess, onRestart, isSubmitting }: OtpStepProps) =
       resetInputs();
       return;
     }
-    // INVALID
+
     const attempts = authService.getOtpAttempts(mobile);
     const remaining = Math.max(0, 3 - attempts);
+
     setErrorKind("INVALID");
     setErrorMsg(`Incorrect code. ${remaining} attempts remaining.`);
     resetInputs();
@@ -269,7 +303,9 @@ const OtpStep = ({ mobile, onSuccess, onRestart, isSubmitting }: OtpStepProps) =
 
   const handleChange = (idx: number, value: string) => {
     if (locked) return;
+
     const ch = value.replace(/\D/g, "").slice(-1);
+
     setDigits((prev) => {
       const next = [...prev];
       next[idx] = ch;
@@ -281,6 +317,7 @@ const OtpStep = ({ mobile, onSuccess, onRestart, isSubmitting }: OtpStepProps) =
       if (next.every((d) => d.length === 1)) {
         submit(next.join(""));
       }
+
       return next;
     });
   };
@@ -389,6 +426,7 @@ const OtpStep = ({ mobile, onSuccess, onRestart, isSubmitting }: OtpStepProps) =
             Resend Code
           </button>
         )}
+
         {!locked && (
           <button
             type="button"
