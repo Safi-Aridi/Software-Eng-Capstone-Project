@@ -1128,9 +1128,6 @@ export class ApplicationsService {
         livePhotoUrls = [];
       }
 
-      console.log('[DEBUG] passport_photo_url being sent to 8001:', passportPhotoUrl);
-      console.log('[DEBUG] live_photo_urls:', livePhotoUrls);
-
       const verifyResponse = await fetch(`${ML_BASE_URL}:8001/visualize-pipeline`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
