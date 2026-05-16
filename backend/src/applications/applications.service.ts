@@ -87,6 +87,8 @@ export class ApplicationsService {
   private readonly applicationSelect = `
     SELECT
       a.*,
+      pvo.validity_years,
+      pvo.fee_amount,
       docs.documents,
       rr.resubmission_reasons,
       mf.form_data AS mukhtar_form_data,
@@ -94,6 +96,7 @@ export class ApplicationsService {
       mf.signed_at AS mukhtar_signed_at,
       mf.electronic_signature AS mukhtar_electronic_signature
     FROM applications a
+    LEFT JOIN passport_validity_options pvo ON pvo.validity_id = a.validity_id
     LEFT JOIN LATERAL (
       SELECT jsonb_object_agg(
         CASE d.document_type
