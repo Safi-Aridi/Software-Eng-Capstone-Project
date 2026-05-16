@@ -12,7 +12,16 @@ import vertexai
 from vertexai.generative_models import GenerativeModel, Part, GenerationConfig
 from ultralytics import YOLO
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(title="High-Assurance Lebanese Document Extraction Engine")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Initialize Cloud Clients
 vision_client = vision.ImageAnnotatorClient()

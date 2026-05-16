@@ -119,25 +119,87 @@ const IdentityVerificationPage = () => {
     if (!validateDocuments()) return;
 
     setIsExtracting(true);
+    setStepErrors({});
 
-    // Mock extraction process
-    setTimeout(() => {
-      const mockExtractedData: IdentityData = {
-        fullName: currentUser.user.fullName || "Pending Citizen",
-        registryNumber: "123456789",
-        dob: "1999-01-01",
-        documentType:
-          identityDocumentType === "NATIONAL_ID"
-            ? "National ID"
-            : "Civil Registry Extract",
+    try {
+      // Convert files to base64 and send directly to ML
+      const fileToBase64 = (file: File): Promise<string> => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      };
+
+      const ML_URL = "http://64.227.163.65:8000/extract-id-data";
+      let mlBody: any;
+
+      if (identityDocumentType === "NATIONAL_ID") {
+        const frontB64 = await fileToBase64(documents.frontUrl!);
+        const backB64 = await fileToBase64(documents.backUrl!);
+        mlBody = { document_type: "id_card", front_base64: frontB64, back_base64: backB64 };
+      } else {
+        const extractB64 = await fileToBase64(documents.civilRegistryExtract!);
+        mlBody = { document_type: "civil_registry", document_base64: extractB64 };
+      }
+
+      const mlResp = await fetch(ML_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(mlBody),
+      });
+
+      const mlRawText = await mlResp.text();
+      const mlData = JSON.parse(mlRawText);
+
+      if (!mlResp.ok || mlData.status === "error") {
+        const errMsg = mlData.detail || mlData.message || "Extraction failed. Please try again with clearer images.";
+        const cleanErr = typeof errMsg === "object" ? JSON.stringify(errMsg) : String(errMsg);
+        setStepErrors({ extract: cleanErr.replace("ID_ERROR: ", "") });
+        return;
+      }
+
+      const data = mlData.data || mlData;
+
+      // Build full name from extracted parts
+      const firstName = data.first_name?.en || "";
+      const lastName = data.last_name?.en || "";
+      const extractedFullName = `${firstName} ${lastName}`.trim();
+
+      // Compare with signup name
+      const signupName = (currentUser.user.fullName || "").trim().toLowerCase();
+      const mlName = extractedFullName.toLowerCase();
+      const nameMatch = signupName === mlName || signupName.includes(mlName) || mlName.includes(signupName);
+
+      const extractedResult: IdentityData = {
+        fullName: extractedFullName || currentUser.user.fullName || "",
+        registryNumber: data.registry_number?.latin || data.id_number?.latin || "",
+        dob: data.dob?.latin || "",
+        documentType: identityDocumentType === "NATIONAL_ID" ? "National ID" : "Civil Registry Extract",
         frontDocumentName: documents.frontUrl?.name ?? null,
         backDocumentName: documents.backUrl?.name ?? null,
         civilRegistryExtractName: documents.civilRegistryExtract?.name ?? null,
       };
 
-      setExtractedData(mockExtractedData);
+      setExtractedData(extractedResult);
+
+      if (!nameMatch) {
+        setStepErrors({
+          extract: `Name mismatch: Your signup name "${currentUser.user.fullName}" does not match the ID name "${extractedFullName}". You will be logged out for security.`,
+        });
+        setExtractedData(null);
+        setTimeout(() => {
+          authService.logout();
+          navigate("/login");
+        }, 3000);
+        return;
+      }
+    } catch (err: any) {
+      setStepErrors({ extract: err.message || "Failed to extract identity. Please try again." });
+    } finally {
       setIsExtracting(false);
-    }, 2000);
+    }
   };
 
   const handleSubmitVerification = async () => {
@@ -278,7 +340,12 @@ const IdentityVerificationPage = () => {
             </p>
           </div>
 
-          <div className="mb-8">
+           <div className="mb-8">
+            {stepErrors.extract && (
+              <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {stepErrors.extract}
+              </div>
+            )}
             <button
               onClick={handleExtractIdentity}
               disabled={!canExtract || isExtracting}
