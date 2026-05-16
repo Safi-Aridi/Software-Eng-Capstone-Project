@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   UnauthorizedException,
@@ -10,6 +11,20 @@ import { DatabaseService } from '../database/database.service';
 const SALT_ROUNDS = 10;
 const MAX_LOGIN_ATTEMPTS = 3;
 const LOCK_INTERVAL_SQL = "INTERVAL '15 minutes'";
+
+// Server-side defence: the frontend already enforces these rules in the
+// signup UI, but any direct POST to /auth/register bypasses that — so we
+// re-validate here before bcrypt-hashing or touching the DB.
+function validatePassword(password: string): string | null {
+  if (!password || password.length < 8) return 'Password must be at least 8 characters.';
+  if (password.length > 64) return 'Password must not exceed 64 characters.';
+  if (/\s/.test(password)) return 'Password must not contain spaces.';
+  if (!/[A-Z]/.test(password)) return 'Password must contain at least one uppercase letter.';
+  if (!/[a-z]/.test(password)) return 'Password must contain at least one lowercase letter.';
+  if (!/[0-9]/.test(password)) return 'Password must contain at least one digit.';
+  if (!/[!@#$%^&*()_+\-=\[\]{}|;':",.<>?/`~]/.test(password)) return 'Password must contain at least one special character.';
+  return null;
+}
 
 
 interface UserRow {
@@ -61,6 +76,11 @@ export class AuthService {
   async register(body: RegisterBody) {
     if (!body?.email || !body?.password) {
       throw new ConflictException('Email and password are required');
+    }
+
+    const pwError = validatePassword(body.password);
+    if (pwError) {
+      throw new BadRequestException(pwError);
     }
 
     const existing = await this.db.query(

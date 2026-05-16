@@ -13,6 +13,63 @@ const formatCountdown = (totalSec: number): string => {
   return `${m}:${s.toString().padStart(2, "0")}`;
 };
 
+// Password rules — each entry maps a human-readable rule to a predicate.
+// `validatePassword` returns the labels of any unmet rules. The signup form
+// uses this both for live feedback and to gate the Submit button. The
+// backend mirrors these rules in auth.service.ts.
+const SPECIAL_CHARS_RE = /[!@#$%^&*()_+\-=\[\]{}|;':",.<>?/`~]/;
+
+const PASSWORD_RULES: ReadonlyArray<{
+  label: string;
+  test: (p: string) => boolean;
+}> = [
+  { label: "At least 8 characters", test: (p) => p.length >= 8 },
+  { label: "At most 64 characters", test: (p) => p.length > 0 && p.length <= 64 },
+  { label: "No whitespace", test: (p) => p.length > 0 && !/\s/.test(p) },
+  { label: "At least one uppercase letter (A–Z)", test: (p) => /[A-Z]/.test(p) },
+  { label: "At least one lowercase letter (a–z)", test: (p) => /[a-z]/.test(p) },
+  { label: "At least one digit (0–9)", test: (p) => /[0-9]/.test(p) },
+  {
+    label: "At least one special character (!@#$%^&* etc.)",
+    test: (p) => SPECIAL_CHARS_RE.test(p),
+  },
+];
+
+const validatePassword = (password: string): string[] =>
+  PASSWORD_RULES.filter((r) => !r.test(password)).map((r) => r.label);
+
+const passwordStrength = (
+  metCount: number,
+): { label: string; barClass: string; textClass: string; widthClass: string } => {
+  if (metCount <= 2)
+    return {
+      label: "Weak",
+      barClass: "bg-red-500",
+      textClass: "text-red-600",
+      widthClass: "w-1/4",
+    };
+  if (metCount <= 4)
+    return {
+      label: "Fair",
+      barClass: "bg-amber-500",
+      textClass: "text-amber-600",
+      widthClass: "w-2/4",
+    };
+  if (metCount <= 6)
+    return {
+      label: "Good",
+      barClass: "bg-blue-500",
+      textClass: "text-blue-600",
+      widthClass: "w-3/4",
+    };
+  return {
+    label: "Strong",
+    barClass: "bg-green-500",
+    textClass: "text-green-600",
+    widthClass: "w-full",
+  };
+};
+
 const CitizenSignupPage = () => {
   const [formData, setFormData] = useState({
     firstName: "",
@@ -26,8 +83,27 @@ const CitizenSignupPage = () => {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [step, setStep] = useState<Step>("FORM");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const navigate = useNavigate();
+
+  const passwordErrors = validatePassword(formData.password);
+  const passwordRulesMet = PASSWORD_RULES.length - passwordErrors.length;
+  const strength = passwordStrength(passwordRulesMet);
+  const passwordsMatch =
+    formData.password.length > 0 &&
+    formData.password === formData.confirmPassword;
+  const showMismatch =
+    formData.confirmPassword.length > 0 && !passwordsMatch;
+  const canSubmit =
+    formData.firstName.trim().length > 0 &&
+    formData.lastName.trim().length > 0 &&
+    formData.mobileNumber.length === 8 &&
+    formData.email.trim().length > 0 &&
+    passwordErrors.length === 0 &&
+    passwordsMatch &&
+    !isLoading;
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -71,6 +147,12 @@ const CitizenSignupPage = () => {
 
     if (formData.password !== formData.confirmPassword) {
       setError("Passwords do not match");
+      return;
+    }
+
+    const pwErrors = validatePassword(formData.password);
+    if (pwErrors.length > 0) {
+      setError(`Password requirements not met: ${pwErrors[0]}`);
       return;
     }
 
@@ -199,30 +281,109 @@ const CitizenSignupPage = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Password *
                   </label>
-                  <input
-                    type="password"
-                    name="password"
-                    value={formData.password}
-                    onChange={handleInputChange}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Create password"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      name="password"
+                      value={formData.password}
+                      onChange={handleInputChange}
+                      maxLength={64}
+                      className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="Create password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      aria-label={
+                        showPassword ? "Hide password" : "Show password"
+                      }
+                      className="absolute inset-y-0 right-0 px-3 flex items-center text-xs font-medium text-blue-600 hover:text-blue-700"
+                    >
+                      {showPassword ? "Hide" : "Show"}
+                    </button>
+                  </div>
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Confirm Password *
                   </label>
-                  <input
-                    type="password"
-                    name="confirmPassword"
-                    value={formData.confirmPassword}
-                    onChange={handleInputChange}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Confirm password"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showConfirmPassword ? "text" : "password"}
+                      name="confirmPassword"
+                      value={formData.confirmPassword}
+                      onChange={handleInputChange}
+                      maxLength={64}
+                      className={`w-full px-3 py-2 pr-10 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                        showMismatch ? "border-red-400" : "border-gray-300"
+                      }`}
+                      placeholder="Confirm password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword((v) => !v)}
+                      aria-label={
+                        showConfirmPassword
+                          ? "Hide password"
+                          : "Show password"
+                      }
+                      className="absolute inset-y-0 right-0 px-3 flex items-center text-xs font-medium text-blue-600 hover:text-blue-700"
+                    >
+                      {showConfirmPassword ? "Hide" : "Show"}
+                    </button>
+                  </div>
+                  {showMismatch && (
+                    <p className="text-red-600 text-xs mt-1">
+                      Passwords do not match.
+                    </p>
+                  )}
                 </div>
               </div>
+
+              {formData.password.length > 0 && (
+                <div className="rounded-md border border-gray-200 bg-gray-50 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-gray-600">
+                      Password strength
+                    </span>
+                    <span
+                      className={`text-xs font-semibold ${strength.textClass}`}
+                    >
+                      {strength.label}
+                    </span>
+                  </div>
+                  <div
+                    className="h-1.5 w-full rounded-full bg-gray-200 overflow-hidden"
+                    aria-hidden
+                  >
+                    <div
+                      className={`h-full transition-all duration-200 ${strength.barClass} ${strength.widthClass}`}
+                    />
+                  </div>
+                  <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 mt-2">
+                    {PASSWORD_RULES.map((rule) => {
+                      const met = rule.test(formData.password);
+                      return (
+                        <li
+                          key={rule.label}
+                          className={`flex items-start gap-2 text-xs ${
+                            met ? "text-green-600" : "text-gray-500"
+                          }`}
+                        >
+                          <span
+                            aria-hidden
+                            className={met ? "text-green-600" : "text-gray-400"}
+                          >
+                            {met ? "✓" : "✗"}
+                          </span>
+                          <span>{rule.label}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
 
               {error && (
                 <div className="bg-red-50 border border-red-200 rounded-md p-3">
@@ -232,7 +393,7 @@ const CitizenSignupPage = () => {
 
               <button
                 type="submit"
-                disabled={isLoading}
+                disabled={!canSubmit}
                 className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
               >
                 Send OTP

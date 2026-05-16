@@ -1,494 +1,221 @@
 import type { StoredUser } from "./authService";
 import type { AuthorizedStoredUser } from "./authService";
 import type { PassportApplication } from "./applicationService";
-import type { Passport } from "../types/passport";
+
+// =============================================================================
+// Demo dataset (Session 15) — matches backend migration 009_reseed_all_data.sql
+// UUIDs are 1:1 with the SQL migration so a user can flip
+// VITE_USE_MOCK_AUTH / VITE_USE_MOCK_APPLICATIONS without losing their session.
+// =============================================================================
 
 const USERS_KEY = "npis_users";
 const AUTHORIZED_USERS_KEY = "npis_authorized_users";
 const kycStatusKey = (userId: string) => `kyc_status_${userId}`;
 const identityDataKey = (userId: string) => `identity_data_${userId}`;
 const applicationsKey = (userId: string) => `applications_${userId}`;
-const passportsKey = (userId: string) => `passports_${userId}`;
-const signatureKey = (applicationId: string) =>
-  `mukhtar_signature_${applicationId}`;
+// passports_<userId> and notifications_<userId> are also cleared by
+// clearAllSeededKeys() via prefix scan — no per-key helper needed here.
 
-// ─── Citizen test users ───────────────────────────────────────────────────────
+// ─── Citizen UUIDs (mirror migration 009) ─────────────────────────────────────
 
-const TEST_USERS: StoredUser[] = [
-  {
-    userId: "user_001",
-    email: "pending@test.com",
-    password: "test123",
-    fullName: "Ahmad Khalil",
-    mobileNumber: "70123456",
-  },
-  {
-    userId: "a1b2c3d4-0000-0000-0000-000000000001",
-    email: "accepted@test.com",
-    password: "test123",
-    fullName: "Sara Mansour",
-    mobileNumber: "71234567",
-  },
-  {
-    userId: "user_003",
-    email: "rejected@test.com",
-    password: "test123",
-    fullName: "Omar Fayyad",
-    mobileNumber: "76543210",
-  },
+const CITIZEN_UUID = {
+  safi:    "c1c1c1c1-0000-0000-0000-000000000001",
+  mahmoud: "c1c1c1c1-0000-0000-0000-000000000002",
+  jad:     "c1c1c1c1-0000-0000-0000-000000000003",
+  yasser:  "c1c1c1c1-0000-0000-0000-000000000004",
+  makram:  "c1c1c1c1-0000-0000-0000-000000000005",
+  houssam: "c1c1c1c1-0000-0000-0000-000000000006",
+  wael:    "c1c1c1c1-0000-0000-0000-000000000007",
+  joel:    "c1c1c1c1-0000-0000-0000-000000000008",
+  rena:    "c1c1c1c1-0000-0000-0000-000000000009",
+  khaled:  "c1c1c1c1-0000-0000-0000-00000000000a",
+} as const;
+
+// ─── Mukhtar UUIDs (one per Lebanese district, mirror migration 009) ──────────
+
+const MUKHTAR_DISTRICTS: ReadonlyArray<{ uuid: string; district: string }> = [
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000001", district: "Beirut" },
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000002", district: "Metn" },
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000003", district: "Baabda" },
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000004", district: "Aley" },
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000005", district: "Chouf" },
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000006", district: "Jbeil" },
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000007", district: "Kesrouan" },
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000008", district: "Batroun" },
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000009", district: "Koura" },
+  { uuid: "bbbbbbbb-0000-0000-0000-00000000000a", district: "Zgharta" },
+  { uuid: "bbbbbbbb-0000-0000-0000-00000000000b", district: "Bcharre" },
+  { uuid: "bbbbbbbb-0000-0000-0000-00000000000c", district: "Tripoli" },
+  { uuid: "bbbbbbbb-0000-0000-0000-00000000000d", district: "Miniyeh-Danniyeh" },
+  { uuid: "bbbbbbbb-0000-0000-0000-00000000000e", district: "Akkar" },
+  { uuid: "bbbbbbbb-0000-0000-0000-00000000000f", district: "Hermel" },
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000010", district: "Baalbek" },
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000011", district: "Zahle" },
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000012", district: "West Bekaa" },
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000013", district: "Rachaya" },
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000014", district: "Sidon" },
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000015", district: "Tyre" },
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000016", district: "Jezzine" },
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000017", district: "Nabatieh" },
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000018", district: "Bint Jbeil" },
+  { uuid: "bbbbbbbb-0000-0000-0000-000000000019", district: "Hasbaya" },
+  { uuid: "bbbbbbbb-0000-0000-0000-00000000001a", district: "Marjeyoun" },
 ];
 
-const KYC_STATUSES: Record<string, string> = {
-  user_001: "PENDING_IDENTITY_VERIFICATION",
-  "a1b2c3d4-0000-0000-0000-000000000001": "IDENTITY_VERIFIED",
-  user_003: "IDENTITY_REJECTED",
-};
+const districtSlug = (d: string): string =>
+  d.toLowerCase().replace(/\s+/g, "-");
 
-const IDENTITY_DATA: Record<string, object> = {
-  user_001: {
-    fullName: "Ahmad Khalil",
-    registryNumber: "12345",
-    dateOfBirth: "1990-05-15",
-  },
-  "a1b2c3d4-0000-0000-0000-000000000001": {
-    fullName: "Sara Mansour",
-    registryNumber: "67890",
-    dateOfBirth: "1995-11-22",
-  },
-  user_003: {
-    fullName: "Omar Fayyad",
-    registryNumber: "11223",
-    dateOfBirth: "1988-03-30",
-  },
-};
+// ─── Citizen test users (10) ──────────────────────────────────────────────────
 
-// ─── Authorized test users (Mukhtar + Officer) ────────────────────────────────
+interface CitizenSeed {
+  userId: string;
+  firstName: string;
+  email: string;
+  password: string;
+  mobileNumber: string;
+}
+
+const CITIZEN_SEEDS: CitizenSeed[] = [
+  { userId: CITIZEN_UUID.safi,    firstName: "Safi",    email: "safi@gmail.com",    password: "Safi123!",    mobileNumber: "70000001" },
+  { userId: CITIZEN_UUID.mahmoud, firstName: "Mahmoud", email: "mahmoud@gmail.com", password: "Mahmoud123!", mobileNumber: "70000002" },
+  { userId: CITIZEN_UUID.jad,     firstName: "Jad",     email: "jad@gmail.com",     password: "Jad123!",     mobileNumber: "70000003" },
+  { userId: CITIZEN_UUID.yasser,  firstName: "Yasser",  email: "yasser@gmail.com",  password: "Yasser123!",  mobileNumber: "70000004" },
+  { userId: CITIZEN_UUID.makram,  firstName: "Makram",  email: "makram@gmail.com",  password: "Makram123!",  mobileNumber: "70000005" },
+  { userId: CITIZEN_UUID.houssam, firstName: "Houssam", email: "houssam@gmail.com", password: "Houssam123!", mobileNumber: "70000006" },
+  { userId: CITIZEN_UUID.wael,    firstName: "Wael",    email: "wael@gmail.com",    password: "Wael123!",    mobileNumber: "70000007" },
+  { userId: CITIZEN_UUID.joel,    firstName: "Joel",    email: "joel@gmail.com",    password: "Joel123!",    mobileNumber: "70000008" },
+  { userId: CITIZEN_UUID.rena,    firstName: "Rena",    email: "rena@gmail.com",    password: "Rena123!",    mobileNumber: "70000009" },
+  { userId: CITIZEN_UUID.khaled,  firstName: "Khaled",  email: "khaled@gmail.com",  password: "Khaled123!",  mobileNumber: "70000010" },
+];
+
+const TEST_USERS: StoredUser[] = CITIZEN_SEEDS.map((c) => ({
+  userId: c.userId,
+  email: c.email,
+  password: c.password,
+  fullName: `${c.firstName} Test`,
+  mobileNumber: c.mobileNumber,
+  failedLoginAttempts: 0,
+  isLocked: false,
+  lockedAt: null,
+}));
+
+// All seeded citizens have completed identity verification.
+const KYC_STATUSES: Record<string, string> = Object.fromEntries(
+  CITIZEN_SEEDS.map((c) => [c.userId, "IDENTITY_VERIFIED"]),
+);
+
+const IDENTITY_DATA: Record<string, object> = Object.fromEntries(
+  CITIZEN_SEEDS.map((c, idx) => [
+    c.userId,
+    {
+      fullName: `${c.firstName} Test`,
+      registryNumber: `NR-${100000 + idx + 1}`,
+      dateOfBirth: "1990-01-01",
+    },
+  ]),
+);
+
+// ─── Authorized users (26 mukhtars + 2 officers) ──────────────────────────────
 
 const AUTHORIZED_USERS: AuthorizedStoredUser[] = [
-  {
-    userId: "mukhtar_001",
-    email: "mukhtar@test.com",
-    password: "test123",
-    fullName: "Khalil Raad",
+  ...MUKHTAR_DISTRICTS.map<AuthorizedStoredUser>((m) => ({
+    userId: m.uuid,
+    email: `mukhtar.${districtSlug(m.district)}@gmail.com`,
+    password: "Mukhtar123!",
+    fullName: `Mukhtar ${m.district}`,
     role: "mukhtar",
+  })),
+  {
+    userId: "0ff10ff1-0000-0000-0000-000000000001",
+    email: "officer1@gmail.com",
+    password: "Officer123!",
+    fullName: "Officer One",
+    role: "officer",
   },
   {
-    userId: "officer_001",
-    email: "officer@test.com",
-    password: "test123",
-    fullName: "Rima Sleiman",
+    userId: "0ff10ff1-0000-0000-0000-000000000002",
+    email: "officer2@gmail.com",
+    password: "Officer123!",
+    fullName: "Officer Two",
     role: "officer",
   },
 ];
 
-// ─── Applications (relative to 2026-04-30) ───────────────────────────────────
+// ─── Applications for Safi + Jad (VERIFIED) ───────────────────────────────────
 
-const APPS_USER_002: PassportApplication[] = [
-  {
-    applicationId: "app_seed_002_001",
-    userId: "a1b2c3d4-0000-0000-0000-000000000001",
-    applicationType: "NEW",
-    currentStatus: "MUKHTAR_SIGNED",
-    submissionDate: "2026-04-20T09:00:00.000Z",
-    trackingNumber: "NPIS-2026-000001",
-    passportValidity: 10,
-    feeAmount: 350_000,
-    documents: {
-      identityDocument: "national_id.pdf",
-      passportPhoto: "photo.jpg",
-      oldPassport: null,
-    },
-    mukhtarFormData: {
-      address: "12 Hamra Street, Beirut",
-      district: "Beirut",
-      mukhtarName: "Khalil Raad",
-    },
-    biometricCaptured: true,
-    statusHistory: [
-      { status: "PENDING_REVIEW", timestamp: "2026-04-20T09:00:00.000Z" },
-      { status: "VERIFIED", timestamp: "2026-04-22T11:30:00.000Z" },
-      { status: "MUKHTAR_SIGNED", timestamp: "2026-04-25T14:00:00.000Z" },
-    ],
-  },
-  {
-    applicationId: "app_seed_002_002",
-    userId: "a1b2c3d4-0000-0000-0000-000000000001",
-    applicationType: "RENEWAL",
-    currentStatus: "PENDING_REVIEW",
-    submissionDate: "2026-04-28T10:00:00.000Z",
-    trackingNumber: "NPIS-2026-000002",
-    passportValidity: 5,
-    feeAmount: 200_000,
-    documents: {
-      identityDocument: "national_id.pdf",
-      passportPhoto: "photo.jpg",
-      oldPassport: "old_passport_scan.pdf",
-    },
-    mukhtarFormData: {
-      address: "12 Hamra Street, Beirut",
-      district: "Beirut",
-      mukhtarName: "Khalil Raad",
-    },
-    biometricCaptured: false,
-    statusHistory: [
-      { status: "PENDING_REVIEW", timestamp: "2026-04-28T10:00:00.000Z" },
-    ],
-  },
-  // ── VERIFIED apps for mukhtar queue ──────────────────────────────────────
-  {
-    applicationId: "app_seed_verified_001",
-    userId: "a1b2c3d4-0000-0000-0000-000000000001",
-    applicationType: "NEW",
-    currentStatus: "VERIFIED",
-    submissionDate: "2026-04-15T08:00:00.000Z",
-    trackingNumber: "NPIS-2026-100001",
-    passportValidity: 10,
-    feeAmount: 350_000,
-    documents: {
-      identityDocument: "national_id.pdf",
-      passportPhoto: "photo.jpg",
-      oldPassport: null,
-    },
-    mukhtarFormData: {
-      address: "15 Hamra Street, Beirut",
-      district: "Beirut",
-      mukhtarName: "Khalil Raad",
-    },
-    biometricCaptured: true,
-    statusHistory: [
-      { status: "PENDING_REVIEW", timestamp: "2026-04-15T08:00:00.000Z" },
-      { status: "VERIFIED", timestamp: "2026-04-17T10:00:00.000Z" },
-    ],
-  },
-  {
-    applicationId: "app_seed_verified_002",
-    userId: "a1b2c3d4-0000-0000-0000-000000000001",
-    applicationType: "RENEWAL",
-    currentStatus: "VERIFIED",
-    submissionDate: "2026-04-16T11:00:00.000Z",
-    trackingNumber: "NPIS-2026-100002",
-    passportValidity: 5,
-    feeAmount: 200_000,
-    documents: {
-      identityDocument: "national_id.pdf",
-      passportPhoto: "photo.jpg",
-      oldPassport: "old_passport.pdf",
-    },
-    mukhtarFormData: {
-      address: "8 Al-Mina Road, Tripoli",
-      district: "Tripoli",
-      mukhtarName: "Khalil Raad",
-    },
-    biometricCaptured: false,
-    statusHistory: [
-      { status: "PENDING_REVIEW", timestamp: "2026-04-16T11:00:00.000Z" },
-      { status: "VERIFIED", timestamp: "2026-04-18T09:00:00.000Z" },
-    ],
-  },
-  {
-    applicationId: "app_seed_verified_003",
-    userId: "a1b2c3d4-0000-0000-0000-000000000001",
-    applicationType: "NEW",
-    currentStatus: "VERIFIED",
-    submissionDate: "2026-04-17T14:00:00.000Z",
-    trackingNumber: "NPIS-2026-100003",
-    passportValidity: 10,
-    feeAmount: 350_000,
-    documents: {
-      identityDocument: "id_card.jpg",
-      passportPhoto: "portrait.jpg",
-      oldPassport: null,
-    },
-    mukhtarFormData: {
-      address: "3 Riad Al-Solh Street, Sidon",
-      district: "Sidon",
-      mukhtarName: "Khalil Raad",
-    },
-    biometricCaptured: true,
-    statusHistory: [
-      { status: "PENDING_REVIEW", timestamp: "2026-04-17T14:00:00.000Z" },
-      { status: "VERIFIED", timestamp: "2026-04-19T11:00:00.000Z" },
-    ],
-  },
-  // ── MUKHTAR_SIGNED apps for officer queue ─────────────────────────────────
-  {
-    applicationId: "app_seed_signed_001",
-    userId: "a1b2c3d4-0000-0000-0000-000000000001",
-    applicationType: "NEW",
-    currentStatus: "MUKHTAR_SIGNED",
-    submissionDate: "2026-04-10T09:00:00.000Z",
-    trackingNumber: "NPIS-2026-200001",
-    passportValidity: 10,
-    feeAmount: 350_000,
-    documents: {
-      identityDocument: "national_id.pdf",
-      passportPhoto: "photo.jpg",
-      oldPassport: null,
-    },
-    mukhtarFormData: {
-      address: "22 Verdun Road, Beirut",
-      district: "Beirut",
-      mukhtarName: "Khalil Raad",
-    },
-    biometricCaptured: true,
-    statusHistory: [
-      { status: "PENDING_REVIEW", timestamp: "2026-04-10T09:00:00.000Z" },
-      { status: "VERIFIED", timestamp: "2026-04-12T10:00:00.000Z" },
-      { status: "MUKHTAR_SIGNED", timestamp: "2026-04-14T13:00:00.000Z" },
-    ],
-  },
-  {
-    applicationId: "app_seed_signed_002",
-    userId: "a1b2c3d4-0000-0000-0000-000000000001",
-    applicationType: "RENEWAL",
-    currentStatus: "MUKHTAR_SIGNED",
-    submissionDate: "2026-04-11T10:30:00.000Z",
-    trackingNumber: "NPIS-2026-200002",
-    passportValidity: 5,
-    feeAmount: 200_000,
-    documents: {
-      identityDocument: "national_id.pdf",
-      passportPhoto: "photo.jpg",
-      oldPassport: "old_passport.pdf",
-    },
-    mukhtarFormData: {
-      address: "7 Jdeideh Avenue, Beirut",
-      district: "Metn",
-      mukhtarName: "Khalil Raad",
-    },
-    biometricCaptured: false,
-    statusHistory: [
-      { status: "PENDING_REVIEW", timestamp: "2026-04-11T10:30:00.000Z" },
-      { status: "VERIFIED", timestamp: "2026-04-13T11:00:00.000Z" },
-      { status: "MUKHTAR_SIGNED", timestamp: "2026-04-15T15:00:00.000Z" },
-    ],
-  },
-];
+const SAFI_APPLICATION_ID = "a99a99a9-0000-0000-0000-000000000101";
+const JAD_APPLICATION_ID  = "a99a99a9-0000-0000-0000-000000000102";
 
-const APPS_USER_001: PassportApplication[] = [
-  {
-    applicationId: "app_seed_001_001",
-    userId: "user_001",
-    applicationType: "NEW",
-    currentStatus: "RESUBMISSION_REQUIRED",
-    submissionDate: "2026-04-23T08:00:00.000Z",
-    trackingNumber: "NPIS-2026-000003",
-    passportValidity: 5,
-    feeAmount: 200_000,
-    documents: {
-      identityDocument: "id_blurry.jpg",
-      passportPhoto: "photo.png",
-      oldPassport: null,
-    },
-    mukhtarFormData: {
-      address: "5 Verdun Road, Beirut",
-      district: "Baabda",
-      mukhtarName: "Khalil Raad",
-    },
-    biometricCaptured: true,
-    statusHistory: [
-      { status: "PENDING_REVIEW", timestamp: "2026-04-23T08:00:00.000Z" },
-      {
-        status: "RESUBMISSION_REQUIRED",
-        timestamp: "2026-04-25T16:00:00.000Z",
-      },
-    ],
-  },
-];
+const BEIRUT_MUKHTAR = MUKHTAR_DISTRICTS[0]; // Beirut entry — mukhtar.beirut@gmail.com
 
-// Mock mukhtar signatures for the pre-seeded MUKHTAR_SIGNED applications
-const SEED_SIGNATURES: Record<string, object> = {
-  app_seed_002_001: {
-    signatureId: "sig_app_seed_002_001_seed",
-    algorithm: "RSA-SHA256",
-    timestamp: "2026-04-25T14:00:00.000Z",
-    signedBy: "mukhtar_001",
-    digest: "mock-digest-a1b2c3d4e5f6",
-  },
-  app_seed_signed_001: {
-    signatureId: "sig_app_seed_signed_001_seed",
-    algorithm: "RSA-SHA256",
-    timestamp: "2026-04-14T13:00:00.000Z",
-    signedBy: "mukhtar_001",
-    digest: "mock-digest-f6e5d4c3b2a1",
-  },
-  app_seed_signed_002: {
-    signatureId: "sig_app_seed_signed_002_seed",
-    algorithm: "RSA-SHA256",
-    timestamp: "2026-04-15T15:00:00.000Z",
-    signedBy: "mukhtar_001",
-    digest: "mock-digest-1a2b3c4d5e6f",
-  },
-};
+const dayOffset = (days: number): string =>
+  new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
-// ─── Near-expiry DELIVERED apps for user_002 (built dynamically relative to today) ──
-
-// Issuance offsets (now-relative) used by both the application and passport seeders
-// so the passport's expiresAt aligns with the intended severity tier.
-const yearMs = 1000 * 60 * 60 * 24 * 365;
-const monthMs = 1000 * 60 * 60 * 24 * 30;
-
-const expiryOffsets = () => {
-  const now = Date.now();
-  return {
-    // Info-tier: ~6 months until expiry → 5y validity, issued ~4y6m ago
-    info: new Date(now - 4.5 * yearMs).toISOString(),
-    // Warning-tier: ~2 months until expiry → 5y validity, issued ~4y10m ago
-    warning: new Date(now - (4 * yearMs + 10 * monthMs)).toISOString(),
-    // Critical/Expired: expired ~1 month ago → 5y validity, issued ~5y1m ago
-    expired: new Date(now - (5 * yearMs + monthMs)).toISOString(),
-  };
-};
-
-const buildExpiryDemoApps = (): PassportApplication[] => {
-  const now = Date.now();
-  const issued = expiryOffsets();
-
-  const baseDocs = {
-    identityDocument: "national_id.pdf",
-    passportPhoto: "photo.jpg",
-    oldPassport: null,
-  };
-  const baseMukhtarForm = {
+const buildDemoApplications = (): { safi: PassportApplication[]; jad: PassportApplication[] } => {
+  const sharedMukhtarForm = {
     address: "12 Hamra Street, Beirut",
-    district: "Beirut",
-    mukhtarName: "Khalil Raad",
+    district: BEIRUT_MUKHTAR.district,
+    mukhtarName: `Mukhtar ${BEIRUT_MUKHTAR.district}`,
+    selectedMukhtarId: BEIRUT_MUKHTAR.uuid,
   };
 
-  return [
-    {
-      applicationId: "app_seed_002_expiry_info",
-      userId: "a1b2c3d4-0000-0000-0000-000000000001",
-      applicationType: "NEW",
-      currentStatus: "DELIVERED",
-      submissionDate: new Date(now - (4.5 * yearMs + monthMs)).toISOString(),
-      trackingNumber: "NPIS-2021-700001",
-      passportValidity: 5,
-      feeAmount: 200_000,
-      paymentStatus: "Paid",
-      documents: baseDocs,
-      mukhtarFormData: baseMukhtarForm,
-      biometricCaptured: true,
-      statusHistory: [
-        { status: "ISSUED", timestamp: issued.info },
-        { status: "DELIVERED", timestamp: issued.info },
-      ],
-    },
-    {
-      applicationId: "app_seed_002_expiry_warning",
-      userId: "a1b2c3d4-0000-0000-0000-000000000001",
-      applicationType: "NEW",
-      currentStatus: "DELIVERED",
-      submissionDate: new Date(now - (4 * yearMs + 11 * monthMs)).toISOString(),
-      trackingNumber: "NPIS-2021-700002",
-      passportValidity: 5,
-      feeAmount: 200_000,
-      paymentStatus: "Paid",
-      documents: baseDocs,
-      mukhtarFormData: baseMukhtarForm,
-      biometricCaptured: true,
-      statusHistory: [
-        { status: "ISSUED", timestamp: issued.warning },
-        { status: "DELIVERED", timestamp: issued.warning },
-      ],
-    },
-    {
-      applicationId: "app_seed_002_expiry_expired",
-      userId: "a1b2c3d4-0000-0000-0000-000000000001",
-      applicationType: "NEW",
-      currentStatus: "DELIVERED",
-      submissionDate: new Date(now - (5 * yearMs + 2 * monthMs)).toISOString(),
-      trackingNumber: "NPIS-2020-700003",
-      passportValidity: 5,
-      feeAmount: 200_000,
-      paymentStatus: "Paid",
-      documents: baseDocs,
-      mukhtarFormData: baseMukhtarForm,
-      biometricCaptured: true,
-      statusHistory: [
-        { status: "ISSUED", timestamp: issued.expired },
-        { status: "DELIVERED", timestamp: issued.expired },
-      ],
-    },
-  ];
-};
-
-// Build matching passport records for the three near-expiry seeded applications.
-// expiresAt is computed from issuedAt + 5y so the banner severity tiers match.
-const buildExpiryDemoPassports = (): Passport[] => {
-  const issued = expiryOffsets();
-  const expiresFromIssued = (iso: string): string => {
-    const d = new Date(iso);
-    d.setFullYear(d.getFullYear() + 5);
-    return d.toISOString();
-  };
-  return [
-    {
-      passportId: "pp_seed_002_info",
-      userId: "a1b2c3d4-0000-0000-0000-000000000001",
-      sourceApplicationId: "app_seed_002_expiry_info",
-      bookletNumber: "LB-7000001",
-      status: "ACTIVE",
-      issuedAt: issued.info,
-      expiresAt: expiresFromIssued(issued.info),
-      cancelledAt: null,
-      cancelledByApplicationId: null,
-    },
-    {
-      passportId: "pp_seed_002_warning",
-      userId: "a1b2c3d4-0000-0000-0000-000000000001",
-      sourceApplicationId: "app_seed_002_expiry_warning",
-      bookletNumber: "LB-7000002",
-      status: "ACTIVE",
-      issuedAt: issued.warning,
-      expiresAt: expiresFromIssued(issued.warning),
-      cancelledAt: null,
-      cancelledByApplicationId: null,
-    },
-    {
-      passportId: "pp_seed_002_expired",
-      userId: "a1b2c3d4-0000-0000-0000-000000000001",
-      sourceApplicationId: "app_seed_002_expiry_expired",
-      bookletNumber: "LB-7000003",
-      status: "ACTIVE",
-      issuedAt: issued.expired,
-      expiresAt: expiresFromIssued(issued.expired),
-      cancelledAt: null,
-      cancelledByApplicationId: null,
-    },
-  ];
-};
-
-// ─── UNPAID app — built dynamically so submissionDate is always 25 min in the past ──
-
-const buildUnpaidApp = (): PassportApplication => ({
-  applicationId: "app_seed_002_unpaid",
-  userId: "a1b2c3d4-0000-0000-0000-000000000001",
-  applicationType: "NEW",
-  currentStatus: "PENDING_REVIEW",
-  submissionDate: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
-  trackingNumber: "NPIS-2026-000004",
-  passportValidity: 5,
-  feeAmount: 200_000,
-  paymentStatus: "UNPAID",
-  documents: {
-    identityDocument: "national_id.pdf",
-    passportPhoto: "photo.jpg",
+  const sharedDocs = {
+    frontUrl: "https://placeholder.test/id_front.jpg",
+    backUrl: "https://placeholder.test/id_back.jpg",
+    passportPhoto: "https://placeholder.test/passport_photo.jpg",
     oldPassport: null,
-  },
-  mukhtarFormData: {
-    address: "10 Bliss Street, Hamra",
-    district: "Beirut",
-    mukhtarName: "Khalil Raad",
-  },
-  biometricCaptured: true,
-  statusHistory: [
-    {
-      status: "PENDING_REVIEW",
-      timestamp: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
+    identityDocument: null,
+    civilRegistryExtract: null,
+  };
+
+  const safi: PassportApplication = {
+    applicationId: SAFI_APPLICATION_ID,
+    userId: CITIZEN_UUID.safi,
+    applicationType: "NEW",
+    currentStatus: "VERIFIED",
+    submissionDate: dayOffset(3),
+    trackingNumber: "NPIS-2026-000101",
+    passportValidity: 5,
+    feeAmount: 200_000,
+    paymentStatus: "Paid",
+    identityDocumentType: "NATIONAL_ID",
+    documents: sharedDocs,
+    mukhtarFormData: {
+      ...sharedMukhtarForm,
+      address: "12 Hamra Street, Beirut",
     },
-  ],
-});
+    biometricCaptured: true,
+    statusHistory: [
+      { status: "PENDING_REVIEW", timestamp: dayOffset(3) },
+      { status: "VERIFIED", timestamp: dayOffset(2) },
+    ],
+  };
+
+  const jad: PassportApplication = {
+    applicationId: JAD_APPLICATION_ID,
+    userId: CITIZEN_UUID.jad,
+    applicationType: "NEW",
+    currentStatus: "VERIFIED",
+    submissionDate: dayOffset(5),
+    trackingNumber: "NPIS-2026-000102",
+    passportValidity: 5,
+    feeAmount: 200_000,
+    paymentStatus: "Paid",
+    identityDocumentType: "NATIONAL_ID",
+    documents: sharedDocs,
+    mukhtarFormData: {
+      ...sharedMukhtarForm,
+      address: "22 Verdun Road, Beirut",
+    },
+    biometricCaptured: true,
+    statusHistory: [
+      { status: "PENDING_REVIEW", timestamp: dayOffset(5) },
+      { status: "VERIFIED", timestamp: dayOffset(4) },
+    ],
+  };
+
+  return { safi: [safi], jad: [jad] };
+};
 
 // ─── Seed helpers ─────────────────────────────────────────────────────────────
 
@@ -510,49 +237,36 @@ const ensureApplicationsExist = (
   }
 };
 
-const seedSignaturesIfNeeded = (): void => {
-  for (const [applicationId, sig] of Object.entries(SEED_SIGNATURES)) {
-    const key = signatureKey(applicationId);
-    if (!localStorage.getItem(key)) {
-      localStorage.setItem(key, JSON.stringify(sig));
-    }
-  }
-};
-
-// Merges passport records into storage by sourceApplicationId — never overwrites.
-const ensurePassportsExist = (userId: string, passports: Passport[]): void => {
-  const stored: Passport[] = JSON.parse(
-    localStorage.getItem(passportsKey(userId)) || "[]",
-  );
-  const existingSources = new Set(stored.map((p) => p.sourceApplicationId));
-  const toAdd = passports.filter(
-    (p) => !existingSources.has(p.sourceApplicationId),
-  );
-  if (toAdd.length > 0) {
-    localStorage.setItem(
-      passportsKey(userId),
-      JSON.stringify([...stored, ...toAdd]),
-    );
-  }
-};
-
 // ─── Public entry point ───────────────────────────────────────────────────────
 
-// Force clears all application data then re-seeds — for DevStatusPanel use.
-export const reseedTestData = (): void => {
+// Wipe every per-user / per-app localStorage key that the demo dataset owns.
+// Used by both reseedTestData (DevStatusPanel) and any future "logout-all"
+// flow. Whitespace-conservative: leaves session/token keys alone.
+const clearAllSeededKeys = (): void => {
+  const prefixesToClear = [
+    "applications_",
+    "passports_",
+    "notifications_",
+    "kyc_status_",
+    "identity_data_",
+    "mukhtar_signature_",
+    "payment_",
+    "expiry_banner_dismissed_",
+  ];
   for (let i = localStorage.length - 1; i >= 0; i--) {
     const k = localStorage.key(i);
-    if (
-      k &&
-      (k.startsWith("applications_") ||
-        k.startsWith("passports_") ||
-        k.startsWith("expiry_banner_dismissed_"))
-    ) {
+    if (!k) continue;
+    if (prefixesToClear.some((p) => k.startsWith(p))) {
       localStorage.removeItem(k);
     }
   }
   localStorage.removeItem(USERS_KEY);
   localStorage.removeItem(AUTHORIZED_USERS_KEY);
+};
+
+// Force clears all demo data then re-seeds — for DevStatusPanel use.
+export const reseedTestData = (): void => {
+  clearAllSeededKeys();
   seedTestDataIfNeeded();
 };
 
@@ -563,10 +277,7 @@ export const seedTestDataIfNeeded = (): void => {
   if (!existing || JSON.parse(existing).length === 0) {
     localStorage.setItem(USERS_KEY, JSON.stringify(TEST_USERS));
     for (const user of TEST_USERS) {
-      localStorage.setItem(
-        kycStatusKey(user.userId),
-        KYC_STATUSES[user.userId],
-      );
+      localStorage.setItem(kycStatusKey(user.userId), KYC_STATUSES[user.userId]);
       localStorage.setItem(
         identityDataKey(user.userId),
         JSON.stringify(IDENTITY_DATA[user.userId]),
@@ -574,7 +285,7 @@ export const seedTestDataIfNeeded = (): void => {
     }
   }
 
-  // Seed authorized users (mukhtar + officer) — idempotent
+  // Seed authorized users (mukhtars + officers) — idempotent
   const existingAuth = localStorage.getItem(AUTHORIZED_USERS_KEY);
   if (!existingAuth || JSON.parse(existingAuth).length === 0) {
     localStorage.setItem(
@@ -583,28 +294,15 @@ export const seedTestDataIfNeeded = (): void => {
     );
   }
 
-  // Skip seeding application/passport/signature mock data when the
-  // applications service is wired to the real backend — otherwise the
-  // dashboard would mix Supabase rows with stale localStorage entries.
+  // Skip seeding application/passport mock data when the applications
+  // service is wired to the real backend — otherwise the dashboard would
+  // mix Supabase rows with stale localStorage entries.
   if (import.meta.env.VITE_USE_MOCK_APPLICATIONS === "false") {
     return;
   }
 
-  // Seed applications by ID — safe to call every load
-  ensureApplicationsExist("a1b2c3d4-0000-0000-0000-000000000001", [
-    ...APPS_USER_002,
-    buildUnpaidApp(),
-    ...buildExpiryDemoApps(),
-  ]);
-  ensureApplicationsExist("user_001", APPS_USER_001);
-
-  // Seed passport records for the three near-expiry demo applications so the
-  // citizen expiry banner has data to display via passportService.
-  ensurePassportsExist(
-    "a1b2c3d4-0000-0000-0000-000000000001",
-    buildExpiryDemoPassports(),
-  );
-
-  // Seed mukhtar signatures for pre-signed applications
-  seedSignaturesIfNeeded();
+  const apps = buildDemoApplications();
+  ensureApplicationsExist(CITIZEN_UUID.safi, apps.safi);
+  ensureApplicationsExist(CITIZEN_UUID.jad, apps.jad);
 };
+
