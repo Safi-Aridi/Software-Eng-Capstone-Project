@@ -206,7 +206,7 @@ export const mukhtarService = {
         userId: citizenUserId,
         type: "RESUBMISSION_REQUIRED",
         title: "Resubmission Required",
-        message: `Action required: Your Mukhtar has requested document resubmission for application ${trackingNumber}.`,
+        message: `Action required: Your Mukhtar has requested corrections for application ${trackingNumber}.`,
         applicationId,
       });
     }

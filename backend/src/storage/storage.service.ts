@@ -33,7 +33,7 @@ export class StorageService {
     const path = `${applicationId}/${fileName}`;
     const { data, error } = await this.supabase.storage
       .from(this.biometricsBucket)
-      .createSignedUploadUrl(path);
+      .createSignedUploadUrl(path, { upsert: true });
     if (error || !data) {
       this.logger.error(
         `createSignedUploadUrl failed for ${path}: ${error?.message}`,
@@ -43,5 +43,23 @@ export class StorageService {
       );
     }
     return { signedUrl: data.signedUrl, path: data.path, token: data.token };
+  }
+
+  async createBiometricsSignedDownloadUrl(
+    path: string,
+    expiresInSeconds = 600,
+  ): Promise<string> {
+    const { data, error } = await this.supabase.storage
+      .from(this.biometricsBucket)
+      .createSignedUrl(path, expiresInSeconds);
+    if (error || !data?.signedUrl) {
+      this.logger.error(
+        `createSignedUrl failed for ${path}: ${error?.message}`,
+      );
+      throw new InternalServerErrorException(
+        `Failed to create signed download URL: ${error?.message ?? 'unknown'}`,
+      );
+    }
+    return data.signedUrl;
   }
 }

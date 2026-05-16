@@ -2009,7 +2009,7 @@ The uploaded Supabase URLs remain stored in `documents.file_url`.
 
 ---
 
-## Session — ML Robustness Pass (branch `feature/ml-robust`)
+## Session 24 — ML Robustness Pass (branch `feature/ml-robust`)
 
 ### Phase 1 — ML bug fixes
 - `kyc.service.ts`: removed the trailing-`A` IP typo (`64.227.163.65A`) and replaced both port-8000 / port-8001 hardcoded URLs with `process.env.ML_BASE_URL`. Added `ML_BASE_URL` to `backend/.env` with a commented header describing both ports.

@@ -71,6 +71,7 @@ export interface PassportApplication {
     civilRegistryExtract?: string;
     passportPhoto?: string;
     oldPassport?: string;
+    biometricCapture?: string;
   };
 }
 
@@ -272,8 +273,8 @@ export const applicationService = {
       notificationService.create(userId, {
         userId,
         type: "STATUS_UPDATE",
-        title: "Documents Resubmitted",
-        message: `Your resubmitted documents for application ${apps[idx].trackingNumber} are now under review.`,
+        title: "Corrections Submitted",
+        message: `Your submitted corrections for application ${apps[idx].trackingNumber} are now under review.`,
         applicationId,
       });
     }

@@ -8,6 +8,7 @@ import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PassportsService } from '../passports/passports.service';
+import { StorageService } from '../storage/storage.service';
 
 type ResubmissionReasons = Partial<{
   identityDocument: string;
@@ -16,9 +17,12 @@ type ResubmissionReasons = Partial<{
   civilRegistryExtract: string;
   passportPhoto: string;
   oldPassport: string;
+  biometricCapture: string;
 }>;
 
-const DOCUMENT_TYPE_BY_REASON_KEY: Record<keyof ResubmissionReasons, string> = {
+const DOCUMENT_TYPE_BY_REASON_KEY: Partial<
+  Record<keyof ResubmissionReasons, string>
+> = {
   identityDocument: 'identity_document',
   frontUrl: 'national_id_front',
   backUrl: 'national_id_back',
@@ -42,6 +46,7 @@ export class ApplicationsService {
     private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
     private readonly passportsService: PassportsService,
+    private readonly storageService: StorageService,
   ) {}
 
   // Helper: resolve a citizen application's owning user_id via citizen_profiles.
@@ -107,17 +112,21 @@ export class ApplicationsService {
     ) docs ON true
     LEFT JOIN LATERAL (
       SELECT jsonb_object_agg(
-        CASE d.document_type
-          WHEN 'identity_document' THEN 'identityDocument'
-          WHEN 'national_id_front' THEN 'frontUrl'
-          WHEN 'national_id_back' THEN 'backUrl'
-          WHEN 'civil_registry_extract' THEN 'civilRegistryExtract'
-          WHEN 'passport_photo' THEN 'passportPhoto'
-          WHEN 'old_passport' THEN 'oldPassport'
+        CASE
+          WHEN r.document_id IS NULL THEN 'biometricCapture'
+          WHEN d.document_type = 'identity_document' THEN 'identityDocument'
+          WHEN d.document_type = 'national_id_front' THEN 'frontUrl'
+          WHEN d.document_type = 'national_id_back' THEN 'backUrl'
+          WHEN d.document_type = 'civil_registry_extract' THEN 'civilRegistryExtract'
+          WHEN d.document_type = 'passport_photo' THEN 'passportPhoto'
+          WHEN d.document_type = 'old_passport' THEN 'oldPassport'
           ELSE d.document_type
         END,
         r.reason
-      ) FILTER (WHERE d.document_type IS NOT NULL) AS resubmission_reasons
+      ) FILTER (
+        WHERE r.reason IS NOT NULL
+          AND (r.document_id IS NULL OR d.document_type IS NOT NULL)
+      ) AS resubmission_reasons
       FROM resubmission_requests r
       LEFT JOIN documents d ON d.document_id = r.document_id
       WHERE r.application_id = a.application_id
@@ -139,6 +148,7 @@ export class ApplicationsService {
         'civilRegistryExtract',
         'passportPhoto',
         'oldPassport',
+        'biometricCapture',
       ] as const
     ).forEach((key) => {
       if (typeof input[key] === 'string') {
@@ -507,7 +517,9 @@ export class ApplicationsService {
       string,
     ][]) {
       const documentType = DOCUMENT_TYPE_BY_REASON_KEY[reasonKey];
-      const documentId = await this.getOrCreateDocumentId(id, documentType);
+      const documentId = documentType
+        ? await this.getOrCreateDocumentId(id, documentType)
+        : null;
 
       await this.databaseService.query(
         `INSERT INTO resubmission_requests
@@ -532,7 +544,7 @@ export class ApplicationsService {
         id,
         oldStatus,
         'Resubmission Required',
-        'Mukhtar requested document resubmission',
+        'Mukhtar requested application corrections',
       ],
     );
 
@@ -549,7 +561,7 @@ export class ApplicationsService {
     await this.notify(
       citizenUserId,
       id,
-      'Your application requires document resubmission. Please check the details.',
+      'Your application requires corrections. Please check the details.',
     );
 
     return {
@@ -595,7 +607,7 @@ export class ApplicationsService {
       `INSERT INTO application_status_history
          (application_id, old_status, new_status, change_reason)
        VALUES ($1, $2, $3, $4)`,
-      [id, oldStatus, 'Pending', 'Citizen resubmitted requested documents'],
+      [id, oldStatus, 'Pending', 'Citizen submitted requested corrections'],
     );
 
     if (body.citizenId) {
@@ -621,7 +633,7 @@ export class ApplicationsService {
         await this.notify(
           mukhtarUserId,
           id,
-          'A citizen has resubmitted documents for your review.',
+          'A citizen has submitted requested corrections for your review.',
         );
       }
     } catch (err) {
@@ -637,7 +649,7 @@ export class ApplicationsService {
 
     return {
       success: true,
-      message: 'Documents resubmitted successfully',
+      message: 'Corrections submitted successfully',
       applicationId: id,
       application: await this.findOne(id),
     };
@@ -945,7 +957,8 @@ export class ApplicationsService {
          (application_id, face_frame_urls, verification_status)
        VALUES ($1, $2::jsonb, 'Pending')
        ON CONFLICT (application_id) DO UPDATE
-       SET face_frame_urls = EXCLUDED.face_frame_urls`,
+       SET face_frame_urls = EXCLUDED.face_frame_urls,
+           verification_status = 'Pending'`,
       [applicationId, JSON.stringify(frameUrls)],
     );
     return { success: true };
@@ -1088,13 +1101,27 @@ export class ApplicationsService {
         const frames = bioResult.rows[0]?.face_frame_urls;
         const parsed: unknown =
           typeof frames === 'string' ? JSON.parse(frames) : frames;
-        const SUPABASE_BASE = 'https://xytwtxvthzpsedolqqju.supabase.co/storage/v1/object/public/documents/';
 
         if (Array.isArray(parsed) && parsed.length > 0) {
-          livePhotoUrls = (parsed as unknown[])
-            .filter((u): u is string => typeof u === 'string' && u.length > 0)
-            .slice(0, 3)
-            .map((u) => u.startsWith('http') ? u : `${SUPABASE_BASE}${u}`);
+          const storedFramePaths = (parsed as unknown[])
+            .filter((u): u is string => typeof u === 'string' && u.length > 0);
+          const oneFramePerPosition = ['center', 'right', 'left']
+            .map((position) =>
+              storedFramePaths.find((u) => u.includes(`face_${position}_`)),
+            )
+            .filter((u): u is string => Boolean(u));
+          const framesForMl =
+            oneFramePerPosition.length === 3
+              ? oneFramePerPosition
+              : storedFramePaths.slice(0, 3);
+
+          livePhotoUrls = await Promise.all(
+            framesForMl.map((u) =>
+              u.startsWith('http')
+                ? u
+                : this.storageService.createBiometricsSignedDownloadUrl(u),
+            ),
+          );
         }
       } catch (bioErr) {
         console.error('[verifyApplicationML] biometric_data lookup failed; proceeding with empty live_photo_urls:', bioErr);
@@ -1124,7 +1151,15 @@ export class ApplicationsService {
         } catch {
           mlError = verifyRawText;
         }
-        throw new Error(mlError);
+        const mlMessage = String(mlError || "Face Verification Failed.");
+        if (
+          mlMessage.includes('LIVENESS_ERROR') ||
+          mlMessage.includes('PASSPORT_ERROR') ||
+          mlMessage.includes('ID_ERROR')
+        ) {
+          throw new Error(mlMessage);
+        }
+        throw new Error(`LIVENESS_ERROR: ${mlMessage}`);
       }
       console.log('[2/2] Success! Faces match.');
 
@@ -1159,9 +1194,23 @@ export class ApplicationsService {
       try {
         const docsToReject: string[] = [];
         const errorString = error.message;
+        const lowerErr = errorString.toLowerCase();
+        const hasDocumentPrefix =
+          errorString.includes('PASSPORT_ERROR') ||
+          errorString.includes('ID_ERROR');
+        const isBiometricIssue =
+          errorString.includes('LIVENESS_ERROR') ||
+          (!hasDocumentPrefix &&
+            (lowerErr.includes('liveness') ||
+              lowerErr.includes('live face') ||
+              lowerErr.includes('face verification') ||
+              lowerErr.includes('face mismatch') ||
+              lowerErr.includes('biometric')));
 
         // Route the error to the correct UI box based on the Python prefix
-        if (errorString.includes('PASSPORT_ERROR')) {
+        if (isBiometricIssue) {
+          docsToReject.length = 0;
+        } else if (errorString.includes('PASSPORT_ERROR')) {
           docsToReject.push('passport_photo');
         } else if (errorString.includes('ID_ERROR')) {
           if (frontUrl) docsToReject.push('national_id_front');
@@ -1170,7 +1219,6 @@ export class ApplicationsService {
         } else {
           // Fallback: if the error mentions passport, flag passport. 
           // Otherwise flag whatever was actually submitted (ID docs).
-          const lowerErr = errorString.toLowerCase();
           if (lowerErr.includes('passport') || lowerErr.includes('photo')) {
             if (passportPhotoUrl) docsToReject.push('passport_photo');
           } else {
@@ -1182,15 +1230,29 @@ export class ApplicationsService {
         }
 
         // Clean the prefix out of the message so the citizen gets a clean sentence
-        if (errorString.includes('LIVENESS_ERROR') || errorString.toLowerCase().includes('live')) {
+        if (isBiometricIssue) {
           docsToReject.length = 0; // clear any already-added docs
           // Don't flag any documents — face capture is not a document
           // Just set a clean message and let the status update handle it
         }
 
-        const cleanMessage = errorString.includes('LIVENESS_ERROR')
+        const cleanMessage = isBiometricIssue
           ? 'Live face capture could not be verified. Please redo the face capture when resubmitting.'
           : errorString.replace('PASSPORT_ERROR: ', '').replace('ID_ERROR: ', '').replace('LIVENESS_ERROR: ', '');
+
+        if (isBiometricIssue) {
+          await this.databaseService.query(
+            `INSERT INTO resubmission_requests (application_id, document_id, reason, resolved, requested_at)
+             VALUES ($1, NULL, $2, false, now())`,
+            [applicationId, `AI Verification Failed: ${cleanMessage}`],
+          );
+          await this.databaseService.query(
+            `UPDATE biometric_data
+             SET verification_status = 'Failed'
+             WHERE application_id = $1`,
+            [applicationId],
+          );
+        }
 
         for (const docType of docsToReject) {
           const documentId = await this.getOrCreateDocumentId(applicationId, docType);

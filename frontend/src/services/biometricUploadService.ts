@@ -60,6 +60,14 @@ export const uploadFrameToStorage = async (
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const makeCaptureRunId = (): string => {
+  const randomPart =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2, 10);
+  return `${Date.now()}-${randomPart}`;
+};
+
 export const captureAndUploadFrames = async (
   applicationId: string,
   position: CapturePosition,
@@ -68,8 +76,9 @@ export const captureAndUploadFrames = async (
   frameCount: number = 3,
 ): Promise<string[]> => {
   const paths: string[] = [];
+  const captureRunId = makeCaptureRunId();
   for (let n = 1; n <= frameCount; n++) {
-    const fileName = `face_${position}_${n}.jpg`;
+    const fileName = `${captureRunId}-face_${position}_${n}.jpg`;
     const blob = await captureFrameFromVideo(videoEl, canvasEl);
     const { signedUrl, path } = await getSignedUploadUrl(
       applicationId,

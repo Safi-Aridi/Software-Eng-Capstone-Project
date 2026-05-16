@@ -111,6 +111,10 @@ const parseResubmissionReasons = (
       typeof input.passportPhoto === "string" ? input.passportPhoto : undefined,
     oldPassport:
       typeof input.oldPassport === "string" ? input.oldPassport : undefined,
+    biometricCapture:
+      typeof input.biometricCapture === "string"
+        ? input.biometricCapture
+        : undefined,
   };
 };
 

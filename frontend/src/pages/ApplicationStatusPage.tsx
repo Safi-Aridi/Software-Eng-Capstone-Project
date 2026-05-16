@@ -90,7 +90,7 @@ const getEstimate = (status: ApplicationStatus): string => {
     case "DELIVERED":
       return "Completed";
     case "RESUBMISSION_REQUIRED":
-      return "On hold — awaiting document resubmission";
+      return "On hold - awaiting requested corrections";
   }
 };
 
@@ -230,10 +230,11 @@ const ApplicationStatusPage = () => {
           <div className="mb-5 p-4 bg-red-50 border border-red-300 rounded-lg flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
               <p className="font-semibold text-red-800 text-sm">
-                Action Required: Documents could not be verified
+                Action Required: Corrections needed
               </p>
               <p className="text-red-700 text-sm mt-0.5">
-                Please resubmit your documents to continue your application.
+                Please submit the requested corrections to continue your
+                application.
               </p>
             </div>
             <button
@@ -242,7 +243,7 @@ const ApplicationStatusPage = () => {
               }
               className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 transition-colors text-sm font-medium shrink-0"
             >
-              Resubmit Documents
+              Submit Corrections
             </button>
           </div>
         )}
@@ -398,7 +399,7 @@ const ApplicationStatusPage = () => {
                       }`}
                     >
                       {isError
-                        ? "Action Required: Please resubmit your documents."
+                        ? "Action Required: Please submit the requested corrections."
                         : stage.description}
                     </p>
                     {timestamp && (
