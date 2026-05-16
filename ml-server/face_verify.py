@@ -26,11 +26,11 @@ class VerificationRequest(BaseModel):
 # HELPER FUNCTIONS
 # ==========================================
 
-async def download_image(client, url):
+async def download_image(client, url, error_prefix="LIVENESS_ERROR"):
     """Downloads an image and returns both raw bytes and a base64 string for the UI."""
     resp = await client.get(url)
     if resp.status_code != 200:
-        raise HTTPException(status_code=400, detail=f"Failed to download {url}")
+        raise HTTPException(status_code=400, detail=f"{error_prefix}: Failed to download image. The file may have expired or not been uploaded correctly.")
     
     b64 = base64.b64encode(resp.content).decode('utf-8')
     return resp.content, f"data:image/jpeg;base64,{b64}"
@@ -75,7 +75,7 @@ async def visualize_pipeline(request: VerificationRequest):
     # 1. Download the Passport Photo (Required in both modes)
     async with httpx.AsyncClient(timeout=30) as client:
         try:
-            pass_bytes, pass_b64 = await download_image(client, request.passport_photo_url)
+            pass_bytes, pass_b64 = await download_image(client, request.passport_photo_url, "PASSPORT_ERROR")
             passport_np = base64_to_numpy(pass_b64)
         except Exception:
             raise HTTPException(status_code=400, detail="PASSPORT_ERROR: Could not download or process the Passport Photo.")
