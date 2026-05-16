@@ -29,7 +29,12 @@ const formatRelativeTime = (iso: string): string => {
   });
 };
 
-const NotificationCenter = ({ userId }: { userId: string }) => {
+type NotificationCenterProps = {
+  userId: string;
+  variant?: "default" | "light";
+};
+
+const NotificationCenter = ({ userId, variant = "default" }: NotificationCenterProps) => {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -85,12 +90,17 @@ const NotificationCenter = ({ userId }: { userId: string }) => {
     refresh();
   };
 
+  const triggerButtonClass =
+    variant === "light"
+      ? "relative p-2 rounded-full text-white hover:bg-white/15 focus:outline-none focus:ring-2 focus:ring-white/70 transition-colors"
+      : "relative p-2 rounded-full text-gray-600 hover:bg-gray-100 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors";
+
   return (
     <div className="relative" ref={containerRef}>
       <button
         onClick={handleToggle}
         aria-label="Notifications"
-        className="relative p-2 rounded-full text-gray-600 hover:bg-gray-100 hover:text-gray-800 transition-colors"
+        className={triggerButtonClass}
       >
         <svg
           className="w-6 h-6"

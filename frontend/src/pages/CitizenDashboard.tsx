@@ -15,7 +15,6 @@ import { receiptService } from "../services/receiptService";
 import AccountLockedPanel from "../components/kyc/AccountLockedPanel";
 import IdentityVerificationPendingPanel from "../components/kyc/IdentityVerificationPendingPanel";
 import IdentityVerificationRejectedPanel from "../components/kyc/IdentityVerificationRejectedPanel";
-import NotificationCenter from "../components/NotificationCenter";
 
 const CitizenDashboard = () => {
   const navigate = useNavigate();
@@ -96,7 +95,7 @@ const CitizenDashboard = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 py-8">
       {renderDashboard()}
     </div>
   );
@@ -160,12 +159,12 @@ const ApplicationCard = ({
 
   return (
     <div
-      className={`border rounded-lg overflow-hidden transition-colors ${
+      className={`overflow-hidden rounded-xl border bg-white shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${
         isUnpaid
           ? "border-yellow-300"
           : isPaymentFailed
             ? "border-red-300"
-            : "border-gray-200 hover:bg-gray-50"
+            : "border-gray-200 hover:border-blue-200"
       }`}
     >
       {isUnpaid && (
@@ -200,8 +199,8 @@ const ApplicationCard = ({
           </button>
         </div>
       )}
-      <div className="p-4">
-        <div className="flex justify-between items-start gap-4">
+      <div className="p-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-start">
           <div className="min-w-0">
             <h3 className="font-semibold text-gray-800">
               {app.applicationType === "NEW" ? "New Passport" : "Passport Renewal"}
@@ -219,7 +218,7 @@ const ApplicationCard = ({
               })}
             </p>
           </div>
-          <div className="flex flex-col items-end gap-2 shrink-0">
+          <div className="flex flex-row flex-wrap items-center gap-2 sm:flex-col sm:items-end shrink-0">
             <StatusBadge status={app.currentStatus} />
             <button
               onClick={() => navigate(`/application/status/${app.applicationId}`)}
@@ -282,6 +281,21 @@ const AcceptedDashboard = () => {
     });
   }, [applications, statusFilter, sortOrder]);
 
+  const actionRequiredCount = applications.filter(
+    (a) =>
+      a.currentStatus === "RESUBMISSION_REQUIRED" ||
+      a.paymentStatus === "UNPAID" ||
+      a.paymentStatus === "Failed",
+  ).length;
+
+  const activeApplicationsCount = applications.filter(
+    (a) => a.currentStatus !== "ISSUED" && a.currentStatus !== "DELIVERED",
+  ).length;
+
+  const completedApplicationsCount = applications.filter(
+    (a) => a.currentStatus === "ISSUED" || a.currentStatus === "DELIVERED",
+  ).length;
+
   useEffect(() => {
     if (!userId) return;
     // FR-30: auto-fail UNPAID applications older than 15 minutes
@@ -305,13 +319,8 @@ const AcceptedDashboard = () => {
     );
   };
 
-  const handleLogout = () => {
-    authService.logout();
-    window.location.href = "/";
-  };
-
   return (
-    <div className="max-w-4xl mx-auto p-6">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
       {expiringPassports.map((e) => (
         <ExpiryBanner
           key={e.passport.passportId}
@@ -347,49 +356,19 @@ const AcceptedDashboard = () => {
         </div>
       )}
 
-      <div className="bg-white rounded-lg shadow-md">
-        {/* Header */}
-        <div className="p-6 border-b border-gray-200">
-          <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-800">
-                Welcome, {displayName}
-              </h1>
-              <p className="text-gray-600 mt-1">
-                Your identity has been verified. You can now apply for a
-                passport.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {userId && <NotificationCenter userId={userId} />}
-              <button
-                onClick={() => navigate("/citizen/profile")}
-                aria-label="Profile"
-                className="flex items-center gap-1.5 text-sm text-gray-700 hover:text-gray-900 hover:bg-gray-100 px-3 py-2 rounded-md transition-colors"
-              >
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-                  />
-                </svg>
-                Profile
-              </button>
-              <button
-                onClick={handleLogout}
-                className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 transition-colors"
-              >
-                Logout
-              </button>
-            </div>
-          </div>
+      <div className="overflow-hidden rounded-2xl bg-white shadow-xl border border-blue-100">
+        {/* Dashboard intro */}
+        <div className="border-b border-blue-100 bg-gradient-to-r from-slate-50 via-white to-blue-50 px-6 py-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-blue-600">
+            Citizen Dashboard
+          </p>
+          <h1 className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight text-gray-900">
+            Welcome, {displayName}
+          </h1>
+          <p className="mt-2 max-w-2xl text-sm sm:text-base text-gray-600">
+            Your identity has been verified. You can apply for a passport,
+            track requests, and complete pending actions from this dashboard.
+          </p>
         </div>
 
         {/* Resubmission notification — mimics FR-23 frontend notification */}
@@ -418,14 +397,54 @@ const AcceptedDashboard = () => {
           ))}
 
         <div className="p-6">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">
+            <div className="rounded-xl border border-gray-200 bg-slate-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Total Applications
+              </p>
+              <p className="mt-2 text-3xl font-bold text-gray-900">
+                {applications.length}
+              </p>
+            </div>
+            <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">
+                Active Requests
+              </p>
+              <p className="mt-2 text-3xl font-bold text-blue-900">
+                {activeApplicationsCount}
+              </p>
+            </div>
+            <div className="rounded-xl border border-amber-100 bg-amber-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                Actions Needed
+              </p>
+              <p className="mt-2 text-3xl font-bold text-amber-900">
+                {actionRequiredCount}
+              </p>
+            </div>
+            <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                Completed
+              </p>
+              <p className="mt-2 text-3xl font-bold text-emerald-900">
+                {completedApplicationsCount}
+              </p>
+            </div>
+          </div>
+
           {/* Section header + apply button */}
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold text-gray-800">
-              My Applications
-            </h2>
+          <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center mb-5">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-800">
+                My Applications
+              </h2>
+              <p className="text-sm text-gray-500">
+                Review your passport requests and continue pending steps.
+              </p>
+            </div>
             <button
               onClick={() => navigate("/application/checklist")}
-              className="bg-blue-600 text-white px-5 py-2 rounded-md hover:bg-blue-700 transition-colors text-sm font-medium"
+              className="inline-flex justify-center rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 transition-colors"
             >
               Apply for Passport
             </button>

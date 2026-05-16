@@ -29,6 +29,15 @@ const MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 
 const CAPTURE_SEQUENCE: CapturePosition[] = ["center", "right", "left"];
+const POSITION_HOLD_MS = 900;
+const POSITION_YAW_RANGES: Record<
+  CapturePosition,
+  { min: number; max: number }
+> = {
+  center: { min: -14, max: 14 },
+  right: { min: -45, max: -16 },
+  left: { min: 16, max: 45 },
+};
 
 const POSITION_INSTRUCTIONS: Record<CapturePosition, string> = {
   center: "Perfect. Hold still — capturing...",
@@ -57,9 +66,25 @@ type LivenessState =
 type CapturePhase = "liveness" | "positioning" | "capturing" | "saving" | "done";
 
 const yawInRange = (yaw: number, position: CapturePosition): boolean => {
-  if (position === "center") return yaw > -10 && yaw < 10;
-  if (position === "right") return yaw < -15;
-  return yaw > 15;
+  const range = POSITION_YAW_RANGES[position];
+  return yaw >= range.min && yaw <= range.max;
+};
+
+const getPositionInstruction = (
+  position: CapturePosition,
+  yaw: number,
+): string => {
+  const range = POSITION_YAW_RANGES[position];
+  if (yawInRange(yaw, position)) return `Hold ${position} position...`;
+  if (position === "center") return "Face the camera straight on.";
+  if (position === "right") {
+    return yaw > range.max
+      ? "Turn your head slowly to the right."
+      : "Turn slightly back toward the camera.";
+  }
+  return yaw < range.min
+    ? "Turn your head slowly to the left."
+    : "Turn slightly back toward the camera.";
 };
 
 const BiometricCaptureWidget = ({
@@ -94,9 +119,11 @@ const BiometricCaptureWidget = ({
     completed: false,
   });
   const yawRef = useRef(0);
+  const smoothedYawRef = useRef<number | null>(null);
   const capturePhaseRef = useRef<CapturePhase>("liveness");
   const currentPositionRef = useRef<CapturePosition | null>(null);
   const allFramePathsRef = useRef<string[]>([]);
+  const captureInProgressRef = useRef(false);
 
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const captureTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -111,6 +138,7 @@ const BiometricCaptureWidget = ({
   }, [capturePhase]);
   useEffect(() => {
     currentPositionRef.current = currentPosition;
+    smoothedYawRef.current = null;
   }, [currentPosition]);
 
   const clearTimer = () => {
@@ -161,6 +189,14 @@ const BiometricCaptureWidget = ({
   // ── Capture phase ─────────────────────────────────────────────────────────
   const runCaptureForPosition = async (position: CapturePosition) => {
     if (!videoRef.current || !canvasRef.current) return;
+    if (
+      captureInProgressRef.current ||
+      capturePhaseRef.current !== "positioning"
+    ) {
+      return;
+    }
+    captureInProgressRef.current = true;
+    capturePhaseRef.current = "capturing";
     setCapturePhase("capturing");
     setFeedback({
       isAllClear: true,
@@ -208,6 +244,8 @@ const BiometricCaptureWidget = ({
       if (nextPos) {
         setProgress(0);
         setCurrentPosition(nextPos);
+        capturePhaseRef.current = "positioning";
+        captureInProgressRef.current = false;
         setCapturePhase("positioning");
         setFeedback({
           isAllClear: false,
@@ -227,6 +265,8 @@ const BiometricCaptureWidget = ({
         message: "Upload failed. Please try again.",
         flashRed: true,
       });
+      capturePhaseRef.current = "positioning";
+      captureInProgressRef.current = false;
       setCapturePhase("positioning");
     }
   };
@@ -366,10 +406,10 @@ const BiometricCaptureWidget = ({
       blendshapes.find((c) => c.categoryName === "eyeBlinkLeft")?.score ?? 0;
     const blinkRight =
       blendshapes.find((c) => c.categoryName === "eyeBlinkRight")?.score ?? 0;
-    if (blinkLeft > 0.4 && blinkRight > 0.4) {
+    if (blinkLeft > 0.75 && blinkRight > 0.75) {
       return {
         isAllClear: false,
-        message: "Please remove your glasses.",
+        message: "Keep your eyes open and face visible.",
         flashRed: false,
         yaw: 0,
         haveFace: true,
@@ -471,6 +511,142 @@ const BiometricCaptureWidget = ({
     };
   };
 
+  const analyzeFaceForPositioning = (results: FaceLandmarkerResult) => {
+    const faces = results.faceLandmarks ?? [];
+
+    if (faces.length === 0) {
+      return {
+        isAllClear: false,
+        message: "Position your face completely within the oval.",
+        flashRed: false,
+        yaw: 0,
+        haveFace: false,
+        qualityOk: false,
+      };
+    }
+
+    if (faces.length > 1) {
+      return {
+        isAllClear: false,
+        message: "Ensure you are the only person in the frame.",
+        flashRed: false,
+        yaw: 0,
+        haveFace: true,
+        qualityOk: false,
+      };
+    }
+
+    const landmarks = faces[0];
+    let minX = 1,
+      minY = 1,
+      maxX = 0,
+      maxY = 0;
+    for (const p of landmarks) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+
+    const faceWidth = maxX - minX;
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    if (faceWidth < 0.2) {
+      return {
+        isAllClear: false,
+        message: "Move closer until your face fills the oval.",
+        flashRed: false,
+        yaw: 0,
+        haveFace: true,
+        qualityOk: false,
+      };
+    }
+
+    if (centerX < 0.25 || centerX > 0.75 || centerY < 0.2 || centerY > 0.85) {
+      return {
+        isAllClear: false,
+        message: "Keep your face centered inside the oval.",
+        flashRed: false,
+        yaw: 0,
+        haveFace: true,
+        qualityOk: false,
+      };
+    }
+
+    if (canvasRef.current && videoRef.current) {
+      const canvas = canvasRef.current;
+      const video = videoRef.current;
+      const ctx = canvas.getContext("2d");
+      if (ctx && video.videoWidth > 0) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const brightness = sampleBrightness(canvas, minX, minY, maxX, maxY);
+        if (brightness !== null && brightness < 60) {
+          return {
+            isAllClear: false,
+            message: "Move to a brighter, well-lit area.",
+            flashRed: false,
+            yaw: 0,
+            haveFace: true,
+            qualityOk: false,
+          };
+        }
+      }
+    }
+
+    const blendshapes = results.faceBlendshapes?.[0]?.categories ?? [];
+    const blinkLeft =
+      blendshapes.find((c) => c.categoryName === "eyeBlinkLeft")?.score ?? 0;
+    const blinkRight =
+      blendshapes.find((c) => c.categoryName === "eyeBlinkRight")?.score ?? 0;
+    const jawOpen =
+      blendshapes.find((c) => c.categoryName === "jawOpen")?.score ?? 0;
+
+    const matrixData =
+      results.facialTransformationMatrixes?.[0]?.data ?? null;
+    let yaw = 0;
+    let pitch = 0;
+    let roll = 0;
+    if (matrixData) {
+      yaw = Math.asin(-matrixData[8]) * (180 / Math.PI);
+      pitch = Math.atan2(matrixData[9], matrixData[10]) * (180 / Math.PI);
+      roll = Math.atan2(matrixData[4], matrixData[0]) * (180 / Math.PI);
+    }
+
+    if (Math.abs(pitch) > 18 || Math.abs(roll) > 18) {
+      return {
+        isAllClear: false,
+        message: "Keep your head level and inside the oval.",
+        flashRed: false,
+        yaw,
+        haveFace: true,
+        qualityOk: false,
+      };
+    }
+
+    if (jawOpen > 0.35 || (blinkLeft > 0.75 && blinkRight > 0.75)) {
+      return {
+        isAllClear: false,
+        message: "Keep your eyes open and mouth closed.",
+        flashRed: false,
+        yaw,
+        haveFace: true,
+        qualityOk: false,
+      };
+    }
+
+    return {
+      isAllClear: true,
+      message: "Face quality is good.",
+      flashRed: false,
+      yaw,
+      haveFace: true,
+      qualityOk: true,
+    };
+  };
+
   const applyLivenessFeedback = (f: Feedback) => {
     setFeedback((prev) => {
       if (prev.isAllClear && !f.isAllClear) {
@@ -497,21 +673,27 @@ const BiometricCaptureWidget = ({
   }>({ position: null, since: 0 });
 
   const applyPositioningFeedback = (
-    haveFace: boolean,
-    yaw: number,
+    analysis: ReturnType<typeof analyzeFaceForPositioning>,
   ) => {
     const position = currentPositionRef.current;
     if (!position) return;
 
-    if (!haveFace) {
+    if (!analysis.haveFace || !analysis.qualityOk) {
       positioningStableRef.current = { position: null, since: 0 };
+      setProgress(0);
       setFeedback({
         isAllClear: false,
-        message: "Position your face completely within the oval.",
+        message: analysis.message,
         flashRed: false,
       });
       return;
     }
+
+    const yaw =
+      smoothedYawRef.current === null
+        ? analysis.yaw
+        : smoothedYawRef.current * 0.65 + analysis.yaw * 0.35;
+    smoothedYawRef.current = yaw;
 
     if (yawInRange(yaw, position)) {
       const stable = positioningStableRef.current;
@@ -520,23 +702,28 @@ const BiometricCaptureWidget = ({
         positioningStableRef.current = { position, since: now };
       }
       const heldFor = now - positioningStableRef.current.since;
+      setProgress(Math.min(100, (heldFor / POSITION_HOLD_MS) * 100));
 
       setFeedback({
         isAllClear: true,
-        message: `Hold ${position} position...`,
+        message: getPositionInstruction(position, yaw),
         flashRed: false,
       });
 
-      // After ~600ms held in range, kick off the capture
-      if (heldFor >= 600 && capturePhaseRef.current === "positioning") {
+      if (
+        heldFor >= POSITION_HOLD_MS &&
+        capturePhaseRef.current === "positioning" &&
+        !captureInProgressRef.current
+      ) {
         positioningStableRef.current = { position: null, since: 0 };
         void runCaptureForPosition(position);
       }
     } else {
       positioningStableRef.current = { position: null, since: 0 };
+      setProgress(0);
       setFeedback({
         isAllClear: false,
-        message: POSITION_WAITING[position],
+        message: getPositionInstruction(position, yaw),
         flashRed: false,
       });
     }
@@ -663,10 +850,9 @@ const BiometricCaptureWidget = ({
                 flashRed: r.flashRed,
               });
             } else if (phase === "positioning") {
-              // Still want a quick yaw extraction for positioning checks.
-              const r = analyzeFaceResults(results);
+              const r = analyzeFaceForPositioning(results);
               yawRef.current = r.yaw;
-              applyPositioningFeedback(r.haveFace, r.yaw);
+              applyPositioningFeedback(r);
             }
             // 'capturing' and 'saving' phases skip per-frame feedback — the
             // capture timer & async flow drive the UI instead.

@@ -2006,3 +2006,48 @@ The uploaded Supabase URLs remain stored in `documents.file_url`.
 ### Verification
 - Frontend: `tsc --noEmit` clean.
 - Backend: `tsc -p tsconfig.build.json --noEmit` clean.
+
+---
+
+## Session 24 — ML Robustness Pass (branch `feature/ml-robust`)
+
+### Phase 1 — ML bug fixes
+- `kyc.service.ts`: removed the trailing-`A` IP typo (`64.227.163.65A`) and replaced both port-8000 / port-8001 hardcoded URLs with `process.env.ML_BASE_URL`. Added `ML_BASE_URL` to `backend/.env` with a commented header describing both ports.
+- `applications.service.ts → verifyApplicationML`: switched to `process.env.ML_BASE_URL` (fallback `http://64.227.163.65`). When `passport_photo` is missing from `documents`, the service now short-circuits before calling ML, inserts a `resubmission_requests` row for `passport_photo`, sets the application to `Resubmission Required`, and returns without hitting port 8001.
+- Wired `face_frame_urls` from `biometric_data` into the port-8001 payload (`livePhotoUrls`). Empty / missing frames fall through to ML Mode A (Dev Skip). The DB lookup is wrapped in try/catch so failures degrade to an empty array.
+- `applications.controller.ts → POST /:id/verify`: added `@UseGuards(JwtAuthGuard)` (no RolesGuard — citizens submit, officers can retry).
+- `NewPassportApplicationPage.tsx`: replaced the hardcoded `fetch('http://localhost:5000/...')` with `apiClient.post('/applications/:id/verify', {})` so the URL honours `VITE_API_BASE_URL`.
+
+### Phase 2 — Extracted identity display
+- New backend endpoint `POST /api/applications/:id/extract-id` (citizen-guarded) and `applicationsService.extractIdData(applicationId, documentType)`. Reads `documents` for the relevant rows (`national_id_front` + `national_id_back` for `id_card`, `civil_registry_extract` for `civil_registry`), POSTs to ML port 8000, returns the `data` payload. Throws `NotFoundException` if the docs aren't uploaded yet, `InternalServerErrorException` on ML failure.
+- Frontend: after `createApplication` succeeds at Step 4→5, fires extraction async via `apiClient.post('/applications/:id/extract-id', { documentType })`. New state `extractedIdData / isExtracting / extractionError` is non-blocking. Step 3 already had the `NATIONAL_ID` / `CIVIL_REGISTRY_EXTRACT` radio — used to derive the ML doc type.
+- Step 6 review gets a new "📋 Extracted from your identity document" panel rendering full name, DOB, registry number, district, governorate, place of birth, gender, marital status, plus a 48×48 thumbnail of `id_photo_base64` when present. Soft amber warning if extraction failed; spinner while extracting. Never blocks submission.
+
+### Phase 3 — FINGERPRINT_REQUIRED replaces VERIFIED
+- DB: new migration `007_fingerprint_status.sql` renames every `'Verified'` row in `applications` and `application_status_history` to `'Fingerprint Required'`.
+- Backend service: success path of `verifyApplicationML` now writes `current_status = 'Fingerprint Required'`, logs a `change_reason` of "ML verification passed — citizen required to visit branch for physical fingerprint collection", and emits a citizen notification ("Please visit your nearest General Security branch…"). Mukhtar queue filters in `appendAccessFilter` and `findAll` switched to `'Fingerprint Required'`. The placeholder return value in `kyc.service.ts` was also updated.
+- Frontend adapter: `STATUS_B2F` / `STATUS_F2B` gained `Fingerprint Required ↔ FINGERPRINT_REQUIRED`. Legacy `Verified ↔ VERIFIED` kept for backwards-compat with pre-migration rows.
+- `ApplicationStatus` union got `FINGERPRINT_REQUIRED`. Timeline stage in `ApplicationStatusPage` replaced (label + amber styling + new estimate copy "Visit your nearest branch for fingerprint collection to proceed"); `COMPLETED_BEFORE`, `STAGE_HISTORY_STATUS`, `STATUS_LABELS`, `STATUS_STYLES`, `getEstimate` updated.
+- `DevStatusPanel`: status options now include `FINGERPRINT_REQUIRED` ("Fingerprint Required (Branch Visit)", amber). Removed standalone `VERIFIED` button — the legacy alias is still accepted by the type but no longer surfaced for new dev overrides.
+- `MukhtarDashboard`: queue subtitle, empty-state hint, and `StatusBadge` map updated to the new label.
+
+### Phase 4 — Mukhtar-region link
+- New `MukhtarService` (DI: `DatabaseService`) with `listDistricts()` and `listByDistrict(district)`.
+- New routes on `MukhtarController`: `GET /api/mukhtar/districts` and `GET /api/mukhtar/by-district?district=...`, both `JwtAuthGuard` only (citizens need to call them during application creation).
+- `MukhtarController.getPendingApplications` switched from `findAll('mukhtar', user)` to a new `applicationsService.findMukhtarQueue(mukhtarUserId)` that filters by `assigned_mukhtar_id = $1` AND `current_status = 'Fingerprint Required'`. Legacy rows with NULL `assigned_mukhtar_id` deliberately surface in no queue (admin reassignment required).
+- `applicationsService.create()` now inserts `assigned_mukhtar_id` from `body.assignedMukhtarId ?? null`.
+- New seed migration `008_seed_mukhtar_districts.sql`: backfills `district='Beirut', village='Hamra'` on the existing test mukhtar (user_id …04), inserts 5 additional demo mukhtars (Aley, Baabda, Metn, Tripoli, Sidon) into `users` + `mukhtar_profiles`, and ensures the …04 mukhtar has a profile row. All ON CONFLICT DO NOTHING.
+- Frontend Step 4 redesigned: text Address + searchable district dropdown (filter input above a native `<select>`) + Mukhtar radio cards (zero / one / many branches). Auto-selects when only one mukhtar exists for the district. Mukhtar selection is required only when at least one mukhtar exists. `MukhtarForm` gained `selectedMukhtarId`; `PassportApplication["mukhtarFormData"]` and the `parseMukhtarFormData` adapter both extended. `applicationService.createApplication` now sends `assignedMukhtarId` in the POST body.
+
+### Phase 5 — Cleanup
+- `backend/.env`: added a `# ML Microservice…` comment header above `ML_BASE_URL`.
+- Audit: no `localhost:5000` strings remain outside `node_modules`; the only `64.227.163.65` references are `??` fallbacks inside `process.env.ML_BASE_URL ?? 'http://64.227.163.65'` in `kyc.service.ts` and `applications.service.ts`. Frontend `tsc --noEmit` clean; backend `tsc -p tsconfig.build.json --noEmit` clean.
+
+### Remaining deferred
+- KYC `IdentityVerificationPage` is still localStorage-only (`VITE_USE_MOCK_KYC=true`) — the real ML flow now runs from the application-submission path instead.
+- OTP SMS gateway still mocked in `authService.generateOtp`.
+- CashPlus payments still mocked.
+- LibanPost manifest call is still a `console.log` placeholder in `issueApplication`.
+
+### Manual steps required
+- Run migrations `007_fingerprint_status.sql` and `008_seed_mukhtar_districts.sql` in the Supabase SQL editor (not auto-applied).

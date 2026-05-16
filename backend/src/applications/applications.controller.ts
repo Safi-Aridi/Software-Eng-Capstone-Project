@@ -115,4 +115,23 @@ export class ApplicationsController {
       body.bookletNumber,
     );
   }
+
+  @Post(':id/verify')
+  @UseGuards(JwtAuthGuard)
+  async verifyML(@Param('id') id: string) {
+    return this.applicationsService.verifyApplicationML(id);
+  }
+
+  @Post(':id/extract-id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('citizen')
+  async extractId(
+    @Param('id') id: string,
+    @Body() body: { documentType?: 'id_card' | 'civil_registry' },
+  ) {
+    return this.applicationsService.extractIdData(
+      id,
+      body.documentType ?? 'id_card',
+    );
+  }
 }

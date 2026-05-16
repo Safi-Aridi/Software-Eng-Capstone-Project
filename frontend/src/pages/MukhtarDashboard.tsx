@@ -41,6 +41,7 @@ const Toast = ({
 
 const StatusBadge = ({ status }: { status: string }) => {
   const styles: Record<string, string> = {
+    FINGERPRINT_REQUIRED: "bg-amber-100 text-amber-800",
     VERIFIED: "bg-blue-100 text-blue-800",
     MUKHTAR_SIGNED: "bg-purple-100 text-purple-800",
     PROCESSED: "bg-green-100 text-green-800",
@@ -48,6 +49,7 @@ const StatusBadge = ({ status }: { status: string }) => {
     PENDING_REVIEW: "bg-gray-100 text-gray-700",
   };
   const labels: Record<string, string> = {
+    FINGERPRINT_REQUIRED: "Fingerprint Required",
     VERIFIED: "Verified",
     MUKHTAR_SIGNED: "Mukhtar Signed",
     PROCESSED: "Processed",
@@ -701,7 +703,8 @@ const MukhtarDashboard = () => {
               Pending Applications Queue
             </h2>
             <p className="text-sm text-gray-500 mt-1">
-              Applications verified by the system and awaiting your endorsement
+              Applications awaiting physical fingerprint verification — citizen
+              has been notified to visit the branch
             </p>
           </div>
 
@@ -739,7 +742,7 @@ const MukhtarDashboard = () => {
                 </p>
                 <p className="text-sm text-gray-400 mt-1">
                   Use the Dev Status Panel to mark a citizen application as
-                  VERIFIED for testing.
+                  FINGERPRINT_REQUIRED for testing.
                 </p>
               </div>
             ) : (

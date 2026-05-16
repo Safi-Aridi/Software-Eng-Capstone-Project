@@ -13,7 +13,8 @@ export type IdentityDocumentType = "NATIONAL_ID" | "CIVIL_REGISTRY_EXTRACT";
 
 export type ApplicationStatus =
   | "PENDING_REVIEW"
-  | "VERIFIED"
+  | "FINGERPRINT_REQUIRED"
+  | "VERIFIED" // legacy — pre-migration-007 rows
   | "MUKHTAR_SIGNED"
   | "PROCESSED"
   | "ISSUED"
@@ -49,6 +50,10 @@ export interface PassportApplication {
     address: string;
     district: string;
     mukhtarName: string;
+    // P4-F: mukhtar_profiles.mukhtar_id of the chosen mukhtar (empty when the
+    // citizen proceeded with no mukhtar selected — only the legacy free-text
+    // mukhtarName is available in that case).
+    selectedMukhtarId?: string;
   };
   biometricCaptured: boolean;
   // For RENEWAL applications: the passportId of the passport being renewed.
@@ -66,6 +71,7 @@ export interface PassportApplication {
     civilRegistryExtract?: string;
     passportPhoto?: string;
     oldPassport?: string;
+    biometricCapture?: string;
   };
 }
 
@@ -191,6 +197,10 @@ export const applicationService = {
           district: application.mukhtarFormData?.district ?? "",
           mukhtarName: application.mukhtarFormData?.mukhtarName ?? "",
         },
+        // P4-F: pass through the citizen-selected mukhtar so the backend can
+        // populate applications.assigned_mukhtar_id.
+        assignedMukhtarId:
+          application.mukhtarFormData?.selectedMukhtarId || null,
         identityDocumentType: application.identityDocumentType ?? null,
         documents: application.documents,
         biometricCaptured: application.biometricCaptured ?? false,
@@ -263,8 +273,8 @@ export const applicationService = {
       notificationService.create(userId, {
         userId,
         type: "STATUS_UPDATE",
-        title: "Documents Resubmitted",
-        message: `Your resubmitted documents for application ${apps[idx].trackingNumber} are now under review.`,
+        title: "Corrections Submitted",
+        message: `Your submitted corrections for application ${apps[idx].trackingNumber} are now under review.`,
         applicationId,
       });
     }

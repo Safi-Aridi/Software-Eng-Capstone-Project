@@ -21,9 +21,10 @@ const TIMELINE_STAGES = [
     description: "Our team is reviewing your submitted documents.",
   },
   {
-    key: "VERIFIED",
-    label: "Verified by System",
-    description: "Your documents have been verified and approved.",
+    key: "FINGERPRINT_REQUIRED",
+    label: "Fingerprint Required",
+    description:
+      "Please visit your nearest General Security branch for physical fingerprint collection.",
   },
   {
     key: "MUKHTAR_SIGNED",
@@ -52,7 +53,8 @@ const TIMELINE_STAGES = [
 const COMPLETED_BEFORE: Record<ApplicationStatus, number> = {
   PENDING_REVIEW: 1,
   RESUBMISSION_REQUIRED: 1,
-  VERIFIED: 2,
+  FINGERPRINT_REQUIRED: 2,
+  VERIFIED: 2, // legacy alias
   MUKHTAR_SIGNED: 3,
   PROCESSED: 4,
   ISSUED: 5,
@@ -63,7 +65,7 @@ const COMPLETED_BEFORE: Record<ApplicationStatus, number> = {
 const STAGE_HISTORY_STATUS: Record<number, ApplicationStatus | null> = {
   0: null, // always submissionDate
   1: "PENDING_REVIEW",
-  2: "VERIFIED",
+  2: "FINGERPRINT_REQUIRED",
   3: "MUKHTAR_SIGNED",
   4: "PROCESSED",
   5: "ISSUED",
@@ -75,6 +77,8 @@ const getEstimate = (status: ApplicationStatus): string => {
   switch (status) {
     case "PENDING_REVIEW":
       return "Estimated: 5–7 business days";
+    case "FINGERPRINT_REQUIRED":
+      return "Visit your nearest branch for fingerprint collection to proceed";
     case "VERIFIED":
       return "Estimated: 3–5 business days";
     case "MUKHTAR_SIGNED":
@@ -86,12 +90,13 @@ const getEstimate = (status: ApplicationStatus): string => {
     case "DELIVERED":
       return "Completed";
     case "RESUBMISSION_REQUIRED":
-      return "On hold — awaiting document resubmission";
+      return "On hold - awaiting requested corrections";
   }
 };
 
 const STATUS_LABELS: Record<ApplicationStatus, string> = {
   PENDING_REVIEW: "Pending Review",
+  FINGERPRINT_REQUIRED: "Fingerprint Required",
   VERIFIED: "Verified",
   MUKHTAR_SIGNED: "Mukhtar Signed",
   PROCESSED: "Approved for Printing",
@@ -102,6 +107,7 @@ const STATUS_LABELS: Record<ApplicationStatus, string> = {
 
 const STATUS_STYLES: Record<ApplicationStatus, string> = {
   PENDING_REVIEW: "bg-yellow-100 text-yellow-800",
+  FINGERPRINT_REQUIRED: "bg-amber-100 text-amber-800",
   VERIFIED: "bg-green-100 text-green-800",
   MUKHTAR_SIGNED: "bg-blue-100 text-blue-800",
   PROCESSED: "bg-green-100 text-green-800",
@@ -224,10 +230,11 @@ const ApplicationStatusPage = () => {
           <div className="mb-5 p-4 bg-red-50 border border-red-300 rounded-lg flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
               <p className="font-semibold text-red-800 text-sm">
-                Action Required: Documents could not be verified
+                Action Required: Corrections needed
               </p>
               <p className="text-red-700 text-sm mt-0.5">
-                Please resubmit your documents to continue your application.
+                Please submit the requested corrections to continue your
+                application.
               </p>
             </div>
             <button
@@ -236,7 +243,7 @@ const ApplicationStatusPage = () => {
               }
               className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 transition-colors text-sm font-medium shrink-0"
             >
-              Resubmit Documents
+              Submit Corrections
             </button>
           </div>
         )}
@@ -392,7 +399,7 @@ const ApplicationStatusPage = () => {
                       }`}
                     >
                       {isError
-                        ? "Action Required: Please resubmit your documents."
+                        ? "Action Required: Please submit the requested corrections."
                         : stage.description}
                     </p>
                     {timestamp && (

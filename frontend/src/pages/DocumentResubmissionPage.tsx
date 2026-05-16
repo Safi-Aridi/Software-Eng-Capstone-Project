@@ -8,6 +8,7 @@ import {
   type PassportApplication,
 } from "../services/applicationService";
 import { documentService } from "../services/documentService";
+import BiometricCaptureWidget from "../components/BiometricCaptureWidget";
 import EnhancedFileUploadField from "../components/upload/EnhancedFileUploadField";
 
 const ALLOWED_DOC_EXTS = ["pdf", "jpg", "jpeg", "png"];
@@ -27,6 +28,15 @@ interface DocumentFiles {
 }
 
 type DocumentField = keyof DocumentFiles;
+
+const DOCUMENT_FIELD_KEYS: DocumentField[] = [
+  "identityDocument",
+  "frontUrl",
+  "backUrl",
+  "civilRegistryExtract",
+  "passportPhoto",
+  "oldPassport",
+];
 
 const ACCEPTANCE_CRITERIA: Record<DocumentField, string[]> = {
   identityDocument: [
@@ -76,9 +86,9 @@ const FieldGuidance = ({
         <p className="text-sm text-red-700">{reason}</p>
       </div>
     ) : (
-      <div className="p-3 bg-green-50 border border-green-200 rounded-md flex items-start gap-2">
+      <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-md flex items-start gap-2">
         <svg
-          className="w-4 h-4 text-green-600 mt-0.5 shrink-0"
+          className="w-4 h-4 text-yellow-600 mt-0.5 shrink-0"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -87,12 +97,12 @@ const FieldGuidance = ({
             strokeLinecap="round"
             strokeLinejoin="round"
             strokeWidth={2}
-            d="M5 13l4 4L19 7"
+            d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
           />
         </svg>
-        <p className="text-sm text-green-800">
-          <span className="font-semibold">Previously accepted.</span> You don't
-          need to re-upload this, but you may if you'd like.
+        <p className="text-sm text-yellow-800">
+          <span className="font-semibold">Correction requested.</span> Please
+          upload a replacement for this item.
         </p>
       </div>
     )}
@@ -120,13 +130,36 @@ const getIdentityResubmissionFields = (
   return ["identityDocument"];
 };
 
-const IDENTITY_FIELD_LABELS: Record<DocumentField, string> = {
+const DOCUMENT_FIELD_LABELS: Record<DocumentField, string> = {
   identityDocument: "Identity Document",
   frontUrl: "National ID Front",
   backUrl: "National ID Back",
   civilRegistryExtract: "Civil Registry Extract",
   passportPhoto: "Passport Photo",
   oldPassport: "Old Passport Scan",
+};
+
+const getFallbackResubmissionFields = (
+  app: PassportApplication,
+): DocumentField[] => [
+  ...getIdentityResubmissionFields(app),
+  "passportPhoto",
+  ...(app.applicationType === "RENEWAL" ? (["oldPassport"] as const) : []),
+];
+
+const getRequestedDocumentFields = (
+  app: PassportApplication,
+): DocumentField[] => {
+  const reasons = app.resubmissionReasons;
+  const explicitFields = DOCUMENT_FIELD_KEYS.filter(
+    (field) => typeof reasons?.[field] === "string",
+  );
+
+  if (explicitFields.length > 0 || reasons?.biometricCapture) {
+    return explicitFields;
+  }
+
+  return getFallbackResubmissionFields(app);
 };
 
 const DocumentResubmissionPage = () => {
@@ -145,6 +178,7 @@ const DocumentResubmissionPage = () => {
     oldPassport: null,
   });
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [biometricCaptured, setBiometricCaptured] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
 
@@ -201,19 +235,25 @@ const DocumentResubmissionPage = () => {
     setDocuments((prev) => ({ ...prev, [field]: null }));
   };
 
-  const identityFields = getIdentityResubmissionFields(app);
+  const requestedDocumentFields = getRequestedDocumentFields(app);
+  const biometricCaptureRequested = Boolean(
+    app.resubmissionReasons?.biometricCapture,
+  );
+  const hasRequestedItems =
+    requestedDocumentFields.length > 0 || biometricCaptureRequested;
 
   const handleResubmit = async () => {
     const errs: Record<string, string> = {};
-    identityFields.forEach((field) => {
+
+    requestedDocumentFields.forEach((field) => {
       if (!documents[field]) {
-        errs[field] = `${IDENTITY_FIELD_LABELS[field]} is required.`;
+        errs[field] = `${DOCUMENT_FIELD_LABELS[field]} is required.`;
       }
     });
-    if (!documents.passportPhoto)
-      errs.passportPhoto = "Passport photo is required.";
-    if (app.applicationType === "RENEWAL" && !documents.oldPassport)
-      errs.oldPassport = "Old passport scan is required for renewal applications.";
+
+    if (biometricCaptureRequested && !biometricCaptured) {
+      errs.biometricCapture = "Face capture is required.";
+    }
 
     if (Object.keys(errs).length > 0) {
       setFieldErrors(errs);
@@ -224,29 +264,39 @@ const DocumentResubmissionPage = () => {
     setSubmitError("");
 
     try {
+      const filesToUpload = requestedDocumentFields.reduce<
+        Partial<Record<DocumentField, File | null>>
+      >((acc, field) => {
+        acc[field] = documents[field];
+        return acc;
+      }, {});
+
       const uploadedDocuments = await documentService.uploadDocuments(
         app.applicationId,
-        documents,
+        filesToUpload,
       );
+      const mergedDocuments = {
+        ...app.documents,
+        ...Object.fromEntries(
+          Object.entries(uploadedDocuments).filter(([, url]) => Boolean(url)),
+        ),
+      } as PassportApplication["documents"];
 
       await applicationService.updateApplicationDocuments(
         currentUser.user.id,
         app.applicationId,
-        uploadedDocuments,
+        mergedDocuments,
       );
 
-      navigate(`/application/status/${app.applicationId}`, {
-        state: {
-          successMessage:
-            "Documents resubmitted successfully. Your application is under review again.",
-        },
-      });
-    } catch (err) {
-      setSubmitError(
-        err instanceof Error
-          ? err.message
-          : "Document resubmission failed. Please try again.",
-      );
+      navigate(`/application/status/${app.applicationId}`);
+    } catch (err: any) {
+      const rawMsg = err?.message || "Verification failed";
+      const cleanMsg =
+        rawMsg.length > 100
+          ? "AI Verification Error: The ID data format was incompatible with the face matcher."
+          : rawMsg;
+
+      setSubmitError(cleanMsg);
     } finally {
       setIsSubmitting(false);
     }
@@ -277,10 +327,11 @@ const DocumentResubmissionPage = () => {
         </button>
 
         <h1 className="text-2xl font-bold text-gray-800 mb-2">
-          Resubmit Documents
+          Submit Corrections
         </h1>
         <p className="text-gray-600 mb-6">
-          Upload new documents for your application to continue processing.
+          Complete only the requested corrections so your application can
+          continue processing.
         </p>
 
         {/* Application info */}
@@ -318,7 +369,7 @@ const DocumentResubmissionPage = () => {
           </svg>
           <p className="text-red-800 text-sm">
             <span className="font-semibold">
-              Your documents require corrections.
+              Your application requires corrections.
             </span>{" "}
             Please review the issues below and resubmit.
           </p>
@@ -327,11 +378,21 @@ const DocumentResubmissionPage = () => {
         {/* Upload fields */}
         <div className="bg-white rounded-lg shadow-md p-6 space-y-6">
           <h2 className="text-base font-semibold text-gray-800 mb-1">
-            Upload Documents
+            Requested Corrections
           </h2>
 
-          {identityFields.map((field) => {
-            const imageOnly = field === "frontUrl" || field === "backUrl";
+          {!hasRequestedItems && (
+            <div className="rounded-md border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+              No specific correction details were found. Please contact support
+              before resubmitting this application.
+            </div>
+          )}
+
+          {requestedDocumentFields.map((field) => {
+            const imageOnly =
+              field === "frontUrl" ||
+              field === "backUrl" ||
+              field === "passportPhoto";
             return (
               <div key={field}>
                 <FieldGuidance
@@ -340,7 +401,7 @@ const DocumentResubmissionPage = () => {
                 />
                 <EnhancedFileUploadField
                   id={`resubmit-${field}`}
-                  label={IDENTITY_FIELD_LABELS[field]}
+                  label={DOCUMENT_FIELD_LABELS[field]}
                   accept={imageOnly ? ".jpg,.jpeg,.png" : ".pdf,.jpg,.jpeg,.png"}
                   acceptLabel={imageOnly ? "JPG, PNG" : "PDF, JPG, PNG"}
                   file={documents[field]}
@@ -359,45 +420,40 @@ const DocumentResubmissionPage = () => {
             );
           })}
 
-          <div>
-            <FieldGuidance
-              field="passportPhoto"
-              reason={app.resubmissionReasons?.passportPhoto}
-            />
-            <EnhancedFileUploadField
-              id="resubmit-passportPhoto"
-              label="Passport Photo"
-              accept=".jpg,.jpeg,.png"
-              acceptLabel="JPG, PNG"
-              file={documents.passportPhoto}
-              stepError={fieldErrors.passportPhoto}
-              required
-              validator={isValidPhoto}
-              typeErrorMsg="Only JPG and PNG files are accepted for passport photos."
-              onChange={(f) => handleFileChange("passportPhoto", f)}
-              onClear={() => clearFile("passportPhoto")}
-            />
-          </div>
+          {biometricCaptureRequested && (
+            <div className="space-y-3">
+              <div className="p-3 bg-red-50 border border-red-200 rounded-md">
+                <p className="text-xs font-semibold text-red-800 uppercase tracking-wide mb-1">
+                  Verification feedback
+                </p>
+                <p className="text-sm text-red-700">
+                  {app.resubmissionReasons?.biometricCapture}
+                </p>
+              </div>
 
-          {app.applicationType === "RENEWAL" && (
-            <div>
-              <FieldGuidance
-                field="oldPassport"
-                reason={app.resubmissionReasons?.oldPassport}
+              <BiometricCaptureWidget
+                applicationId={app.applicationId}
+                onCaptureComplete={(result) => {
+                  if (result.faceCaptured) {
+                    setBiometricCaptured(true);
+                    setFieldErrors((prev) => ({
+                      ...prev,
+                      biometricCapture: "",
+                    }));
+                  }
+                }}
               />
-              <EnhancedFileUploadField
-                id="resubmit-oldPassport"
-                label="Old Passport Scan"
-                accept=".pdf,.jpg,.jpeg,.png"
-                acceptLabel="PDF, JPG, PNG"
-                file={documents.oldPassport}
-                stepError={fieldErrors.oldPassport}
-                required
-                validator={isValidDoc}
-                typeErrorMsg="Only PDF, JPG, and PNG files are accepted."
-                onChange={(f) => handleFileChange("oldPassport", f)}
-                onClear={() => clearFile("oldPassport")}
-              />
+
+              {biometricCaptured && (
+                <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+                  Face capture complete. You can submit the correction now.
+                </div>
+              )}
+              {fieldErrors.biometricCapture && (
+                <p className="text-sm text-red-600">
+                  {fieldErrors.biometricCapture}
+                </p>
+              )}
             </div>
           )}
 
@@ -413,7 +469,7 @@ const DocumentResubmissionPage = () => {
               disabled={isSubmitting}
               className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
             >
-              {isSubmitting ? "Submitting..." : "Resubmit Documents"}
+              {isSubmitting ? "Submitting..." : "Submit Corrections"}
             </button>
           </div>
         </div>

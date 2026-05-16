@@ -19,6 +19,9 @@ export const snakeToCamel = (obj: unknown): unknown => {
 
 const STATUS_B2F: Record<string, string> = {
   "Pending": "PENDING_REVIEW",
+  "Fingerprint Required": "FINGERPRINT_REQUIRED",
+  // Legacy: any rows still in 'Verified' (pre-migration 007) map to the new
+  // FINGERPRINT_REQUIRED bucket so they keep displaying correctly.
   "Verified": "VERIFIED",
   "Mukhtar Signed": "MUKHTAR_SIGNED",
   "Processed for Issuance": "PROCESSED",
@@ -30,6 +33,7 @@ const STATUS_B2F: Record<string, string> = {
 
 const STATUS_F2B: Record<string, string> = {
   "PENDING_REVIEW": "Pending",
+  "FINGERPRINT_REQUIRED": "Fingerprint Required",
   "VERIFIED": "Verified",
   "MUKHTAR_SIGNED": "Mukhtar Signed",
   "PROCESSED": "Processed for Issuance",
@@ -107,6 +111,10 @@ const parseResubmissionReasons = (
       typeof input.passportPhoto === "string" ? input.passportPhoto : undefined,
     oldPassport:
       typeof input.oldPassport === "string" ? input.oldPassport : undefined,
+    biometricCapture:
+      typeof input.biometricCapture === "string"
+        ? input.biometricCapture
+        : undefined,
   };
 };
 
@@ -126,7 +134,12 @@ const parseMukhtarFormData = (
         })()
       : value;
   if (!parsed || typeof parsed !== "object") {
-    return { address: "", district: "", mukhtarName: "" };
+    return {
+      address: "",
+      district: "",
+      mukhtarName: "",
+      selectedMukhtarId: "",
+    };
   }
   const obj = parsed as Record<string, unknown>;
   return {
@@ -134,6 +147,8 @@ const parseMukhtarFormData = (
     district: typeof obj.district === "string" ? obj.district : "",
     mukhtarName:
       typeof obj.mukhtarName === "string" ? obj.mukhtarName : "",
+    selectedMukhtarId:
+      typeof obj.selectedMukhtarId === "string" ? obj.selectedMukhtarId : "",
   };
 };
 
@@ -173,12 +188,45 @@ const inferIdentityDocumentTypeFromDocuments = (
   return null;
 };
 
+// FEE_LBP mirrors FEE_MAP in NewPassportApplicationPage — DB stores fee_amount
+// as a unit-less decimal (200.00 / 350.00 per seed.sql), but the UI quotes LBP
+// to the citizen, so we authoritatively derive the displayed amount from the
+// validity bucket here rather than trusting the raw column.
+const FEE_LBP: Record<5 | 10, number> = { 5: 200_000, 10: 350_000 };
+
+const resolvePassportValidity = (
+  rawYears: unknown,
+  rawValidityId: unknown,
+): 5 | 10 => {
+  const years =
+    typeof rawYears === "number"
+      ? rawYears
+      : typeof rawYears === "string"
+        ? parseInt(rawYears, 10)
+        : NaN;
+  if (years === 10) return 10;
+  if (years === 5) return 5;
+  // Fall back to validity_id when the join column is absent (e.g. older rows
+  // or endpoints that don't include the passport_validity_options join).
+  const validityId =
+    typeof rawValidityId === "number"
+      ? rawValidityId
+      : typeof rawValidityId === "string"
+        ? parseInt(rawValidityId, 10)
+        : NaN;
+  return validityId === 2 ? 10 : 5;
+};
+
 export const mapApiApplicationToFrontend = (raw: unknown): PassportApplication => {
   const c = snakeToCamel(raw) as Record<string, unknown>;
   const currentStatus = backendStatusToFrontend(
     (c.currentStatus as string) ?? "Pending",
   ) as PassportApplication["currentStatus"];
   const documents = parseDocuments(c.documents);
+  const passportValidity = resolvePassportValidity(
+    c.validityYears,
+    c.validityId,
+  );
   return {
     applicationId: (c.applicationId as string) ?? "",
     userId: (c.citizenId as string) ?? "",
@@ -186,8 +234,8 @@ export const mapApiApplicationToFrontend = (raw: unknown): PassportApplication =
     currentStatus,
     submissionDate: (c.createdAt as string) ?? new Date().toISOString(),
     trackingNumber: (c.trackingNumber as string) ?? "",
-    passportValidity: 5,
-    feeAmount: 0,
+    passportValidity,
+    feeAmount: FEE_LBP[passportValidity],
     paymentStatus: backendPaymentStatusToFrontend(
       (c.paymentStatus as string) ?? "Pending",
     ) as PassportApplication["paymentStatus"],
