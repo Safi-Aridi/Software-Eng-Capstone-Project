@@ -7,14 +7,12 @@ export type AccountStatus =
   | "ACTIVE"
   | "LOCKED";
 
-// Persisted record in the npis_users array
 export interface StoredUser {
   userId: string;
   email: string;
   password: string;
   fullName: string;
   mobileNumber: string;
-  // FR-05.1 — single source of truth for failed-attempt + lock state
   failedLoginAttempts?: number;
   isLocked?: boolean;
   lockedAt?: number | null;
@@ -51,24 +49,48 @@ export interface AuthorizedStoredUser {
   role: "mukhtar" | "officer";
 }
 
+export interface RegisterData {
+  email: string;
+  password: string;
+
+  first_name?: string;
+  last_name?: string;
+  phone?: string;
+
+  // Kept for compatibility with older frontend code
+  firstName?: string;
+  lastName?: string;
+  Sphone?: string;
+  mobileNumber?: string;
+  fullName?: string;
+
+  role?: UserRole;
+}
+
 const SESSION_KEY = "npis_user";
 const USERS_KEY = "npis_users";
 const AUTHORIZED_USERS_KEY = "npis_authorized_users";
 
-// Real-API session keys (used when VITE_USE_MOCK_AUTH=false)
 const API_TOKEN_KEY = "npis_token";
 const API_SESSION_KEY = "npis_session";
 
 const USE_MOCK_AUTH =
   (import.meta.env.VITE_USE_MOCK_AUTH ?? "true") !== "false";
+
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
 
 interface ApiUser {
-  id: string;
+  id?: string;
+  user_id?: string;
   email: string;
   role: UserRole;
   fullName?: string | null;
+  full_name?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
 }
 
 interface ApiLoginSuccess {
@@ -85,29 +107,69 @@ interface ApiLoginError {
   lockedUntil?: string;
 }
 
+const normalizeRegisterData = (data: RegisterData) => {
+  const firstName = (data.first_name ?? data.firstName ?? "").trim();
+  const lastName = (data.last_name ?? data.lastName ?? "").trim();
+
+  const phone = (
+    data.phone ??
+    data.Sphone ??
+    data.mobileNumber ??
+    ""
+  ).trim();
+
+  const fullName =
+    data.fullName?.trim() || `${firstName} ${lastName}`.trim();
+
+  return {
+    firstName,
+    lastName,
+    phone,
+    fullName,
+  };
+};
+
+const getApiUserId = (user: ApiUser): string => {
+  return user.id || user.user_id || "";
+};
+
+const getApiFullName = (user: ApiUser): string => {
+  if (user.fullName) return user.fullName;
+  if (user.full_name) return user.full_name;
+
+  const firstName = user.first_name || user.firstName || "";
+  const lastName = user.last_name || user.lastName || "";
+
+  return `${firstName} ${lastName}`.trim();
+};
+
 const sessionRecordFromApi = (token: string, user: ApiUser): MockUser => ({
   token,
   role: user.role,
   accountStatus: "ACTIVE",
   user: {
-    id: user.id,
-    fullName: user.fullName || "",
+    id: getApiUserId(user),
+    fullName: getApiFullName(user),
     email: user.email,
   },
 });
 
 const persistApiSession = (token: string, user: ApiUser): MockUser => {
+  const fullName = getApiFullName(user);
+  const userId = getApiUserId(user);
+
   localStorage.setItem(API_TOKEN_KEY, token);
   localStorage.setItem(
     API_SESSION_KEY,
     JSON.stringify({
-      userId: user.id,
+      userId,
       email: user.email,
       role: user.role,
-      fullName: user.fullName || "",
+      fullName,
       isAuthenticated: true,
     }),
   );
+
   return sessionRecordFromApi(token, user);
 };
 
@@ -121,11 +183,14 @@ const apiLogin = async (
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
     });
+
     const body = (await res.json().catch(() => ({}))) as
       | ApiLoginSuccess
       | ApiLoginError;
+
     if (!res.ok) {
       const err = body as ApiLoginError;
+
       return {
         success: false,
         message: err.message || "Invalid credentials",
@@ -135,8 +200,10 @@ const apiLogin = async (
         ...(err.isLocked && { lockedUserId: email }),
       };
     }
+
     const ok = body as ApiLoginSuccess;
     const mockUser = persistApiSession(ok.token, ok.user);
+
     return {
       success: true,
       message: "Login successful",
@@ -156,32 +223,30 @@ const apiLogin = async (
   }
 };
 
-const apiRegister = async (data: {
-  email: string;
-  password: string;
-  fullName?: string;
-  mobileNumber?: string;
-  role?: UserRole;
-}): Promise<MockUser> => {
+const apiRegister = async (data: RegisterData): Promise<MockUser> => {
+  const { firstName, lastName, phone } = normalizeRegisterData(data);
+
   const res = await fetch(`${API_BASE_URL}/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      firstName,
+      lastName,
+      phone,
       email: data.email,
       password: data.password,
-      fullName: data.fullName,
-      mobile: data.mobileNumber,
       role: data.role ?? "citizen",
     }),
   });
+
   const body = (await res.json().catch(() => ({}))) as
     | ApiLoginSuccess
     | ApiLoginError;
+
   if (!res.ok) {
-    throw new Error(
-      (body as ApiLoginError).message || "Registration failed",
-    );
+    throw new Error((body as ApiLoginError).message || "Registration failed");
   }
+
   const ok = body as ApiLoginSuccess;
   return persistApiSession(ok.token, ok.user);
 };
@@ -189,15 +254,15 @@ const apiRegister = async (data: {
 const apiLogout = async (): Promise<void> => {
   try {
     const token = localStorage.getItem(API_TOKEN_KEY);
+
     await fetch(`${API_BASE_URL}/auth/logout`, {
       method: "POST",
-      headers: token
-        ? { Authorization: `Bearer ${token}` }
-        : undefined,
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     });
   } catch {
-    // ignore — stateless logout
+    // ignore stateless logout errors
   }
+
   localStorage.removeItem(API_TOKEN_KEY);
   localStorage.removeItem(API_SESSION_KEY);
 };
@@ -205,6 +270,7 @@ const apiLogout = async (): Promise<void> => {
 const readApiSession = (): MockUser | null => {
   const stored = localStorage.getItem(API_SESSION_KEY);
   if (!stored) return null;
+
   try {
     const s = JSON.parse(stored) as {
       userId: string;
@@ -212,7 +278,9 @@ const readApiSession = (): MockUser | null => {
       role: UserRole;
       fullName: string;
     };
+
     const token = localStorage.getItem(API_TOKEN_KEY) || "";
+
     return {
       token,
       role: s.role,
@@ -228,12 +296,12 @@ const readApiSession = (): MockUser | null => {
   }
 };
 
-// FR-05.1 — account lockout after 3 failed login attempts; auto-unlock after 15 minutes
 const LOCK_DURATION_MS = 15 * 60 * 1000;
 const MAX_LOGIN_ATTEMPTS = 3;
 
 const OTP_TTL_MS = 5 * 60 * 1000;
 const OTP_MAX_ATTEMPTS = 3;
+
 const otpKey = (mobile: string) => `otp_${mobile}`;
 
 interface OtpRecord {
@@ -245,6 +313,7 @@ interface OtpRecord {
 const readOtp = (mobile: string): OtpRecord | null => {
   const raw = localStorage.getItem(otpKey(mobile));
   if (!raw) return null;
+
   try {
     return JSON.parse(raw) as OtpRecord;
   } catch {
@@ -269,7 +338,6 @@ const getAuthorizedUsers = (): AuthorizedStoredUser[] => {
 const kycStatusKey = (userId: string) => `kyc_status_${userId}`;
 const identityDataKey = (userId: string) => `identity_data_${userId}`;
 
-// Maps raw kycStatus strings (including seed-specific variants) to AccountStatus
 const resolveAccountStatus = (raw: string): AccountStatus => {
   switch (raw) {
     case "IDENTITY_VERIFIED":
@@ -295,26 +363,22 @@ const getUsers = (): StoredUser[] => {
   }
 };
 
-// Persists a single mutated user back into the npis_users array.
-// All lock/failed-attempt state lives on the user record itself, so this
-// is the single write path for that state.
 const writeUser = (updated: StoredUser): void => {
   const users = getUsers();
   const idx = users.findIndex((u) => u.userId === updated.userId);
+
   if (idx < 0) return;
+
   users[idx] = updated;
   localStorage.setItem(USERS_KEY, JSON.stringify(users));
 };
 
-// Returns true if the user's lock has expired (15 minutes since lockedAt).
-// Pure check — does not mutate.
 const lockHasExpired = (user: StoredUser): boolean => {
   if (!user.isLocked || !user.lockedAt) return false;
   return Date.now() - user.lockedAt >= LOCK_DURATION_MS;
 };
 
 export const authService = {
-  // FR-02 — Citizen login
   login: async (
     identifier: string,
     password: string,
@@ -323,22 +387,18 @@ export const authService = {
     return authService.loginCitizen(identifier, password);
   },
 
-  // FR-03 — Citizen registration
-  register: async (data: {
-    mobileNumber: string;
-    email: string;
-    password: string;
-    fullName?: string;
-  }): Promise<MockUser> => {
-    if (!USE_MOCK_AUTH)
+  register: async (data: RegisterData): Promise<MockUser> => {
+    if (!USE_MOCK_AUTH) {
       return apiRegister({ ...data, role: "citizen" });
+    }
+
     return authService.registerCitizen(data);
   },
 
-  // Returns the role of the currently authenticated user in uppercase, matching backend convention
   getUserRole: (): "CITIZEN" | "MUKHTAR" | "OFFICER" | null => {
     const user = authService.getCurrentUser();
     if (!user) return null;
+
     switch (user.role) {
       case "citizen":
         return "CITIZEN";
@@ -363,6 +423,7 @@ export const authService = {
     }
 
     const users = getUsers();
+
     const matched = users.find(
       (u) => u.email === identifier || u.mobileNumber === identifier,
     );
@@ -378,7 +439,6 @@ export const authService = {
       };
     }
 
-    // FR-05.1 — auto-unlock if the 15-minute window has elapsed
     if (matched.isLocked && lockHasExpired(matched)) {
       matched.isLocked = false;
       matched.lockedAt = null;
@@ -386,7 +446,6 @@ export const authService = {
       writeUser(matched);
     }
 
-    // FR-05.1 — short-circuit if still locked, regardless of password
     if (matched.isLocked) {
       return {
         success: false,
@@ -400,11 +459,14 @@ export const authService = {
 
     if (matched.password !== password) {
       const next = (matched.failedLoginAttempts ?? 0) + 1;
+
       matched.failedLoginAttempts = next;
+
       if (next >= MAX_LOGIN_ATTEMPTS) {
         matched.isLocked = true;
         matched.lockedAt = Date.now();
       }
+
       writeUser(matched);
 
       if (matched.isLocked) {
@@ -417,17 +479,20 @@ export const authService = {
           lockedUserId: matched.userId,
         };
       }
+
       const remaining = MAX_LOGIN_ATTEMPTS - next;
+
       return {
         success: false,
-        message: `Invalid credentials. ${remaining} attempt${remaining === 1 ? "" : "s"} remaining before your account is locked.`,
+        message: `Invalid credentials. ${remaining} attempt${
+          remaining === 1 ? "" : "s"
+        } remaining before your account is locked.`,
         failedAttempts: next,
         remainingAttempts: remaining,
         isLocked: false,
       };
     }
 
-    // Success — reset failed-attempt counter on the user record
     matched.failedLoginAttempts = 0;
     matched.lockedAt = null;
     writeUser(matched);
@@ -435,6 +500,7 @@ export const authService = {
     const rawStatus =
       localStorage.getItem(kycStatusKey(matched.userId)) ||
       "NO_IDENTITY_VERIFICATION";
+
     const accountStatus = resolveAccountStatus(rawStatus);
 
     const mockUser: MockUser = {
@@ -450,6 +516,7 @@ export const authService = {
     };
 
     localStorage.setItem(SESSION_KEY, JSON.stringify(mockUser));
+
     return {
       success: true,
       message: "Login successful",
@@ -460,17 +527,15 @@ export const authService = {
     };
   },
 
-  registerCitizen: (data: {
-    mobileNumber: string;
-    email: string;
-    password: string;
-    fullName?: string;
-  }): MockUser => {
+  registerCitizen: (data: RegisterData): MockUser => {
     const users = getUsers();
 
+    const { fullName, phone } = normalizeRegisterData(data);
+
     const existing = users.find(
-      (u) => u.email === data.email || u.mobileNumber === data.mobileNumber,
+      (u) => u.email === data.email || u.mobileNumber === phone,
     );
+
     if (existing) {
       throw new Error(
         "An account with this email or mobile number already exists.",
@@ -478,12 +543,16 @@ export const authService = {
     }
 
     const userId = "user_" + Date.now();
+
     const newUser: StoredUser = {
       userId,
       email: data.email,
       password: data.password,
-      fullName: data.fullName || "",
-      mobileNumber: data.mobileNumber,
+      fullName,
+      mobileNumber: phone,
+      failedLoginAttempts: 0,
+      isLocked: false,
+      lockedAt: null,
     };
 
     users.push(newUser);
@@ -503,6 +572,7 @@ export const authService = {
     };
 
     localStorage.setItem(SESSION_KEY, JSON.stringify(mockUser));
+
     return mockUser;
   },
 
@@ -516,6 +586,7 @@ export const authService = {
 
     if (!USE_MOCK_AUTH) {
       let res: Response;
+
       try {
         res = await fetch(`${API_BASE_URL}/auth/login`, {
           method: "POST",
@@ -525,19 +596,23 @@ export const authService = {
       } catch {
         throw new Error("Unable to reach authentication server");
       }
+
       const body = (await res.json().catch(() => ({}))) as
         | ApiLoginSuccess
         | ApiLoginError;
+
       if (!res.ok) {
         throw new Error(
           (body as ApiLoginError).message || "Invalid credentials",
         );
       }
+
       const ok = body as ApiLoginSuccess;
       return persistApiSession(ok.token, ok.user);
     }
 
     const users = getAuthorizedUsers();
+
     const found = users.find(
       (u) => u.email === identifier && u.password === password,
     );
@@ -560,6 +635,7 @@ export const authService = {
     };
 
     localStorage.setItem(SESSION_KEY, JSON.stringify(mockUser));
+
     return mockUser;
   },
 
@@ -568,8 +644,10 @@ export const authService = {
       const api = readApiSession();
       if (api) return api;
     }
+
     const stored = localStorage.getItem(SESSION_KEY);
     if (!stored) return null;
+
     try {
       return JSON.parse(stored);
     } catch {
@@ -577,11 +655,11 @@ export const authService = {
     }
   },
 
-  // Only removes the active session — other users' scoped data is preserved
   logout: (): void => {
     if (!USE_MOCK_AUTH) {
       void apiLogout();
     }
+
     localStorage.removeItem(SESSION_KEY);
   },
 
@@ -610,39 +688,50 @@ export const authService = {
     localStorage.setItem(SESSION_KEY, JSON.stringify(updatedUser));
   },
 
-  // Updates contact fields (email/mobile) on the user record AND active session.
-  // Returns false with a message if the new value collides with another account.
   updateContactInfo: (
     update: { email?: string; mobileNumber?: string },
   ): { success: boolean; message?: string } => {
     const currentUser = authService.getCurrentUser();
-    if (!currentUser) return { success: false, message: "Not authenticated" };
+
+    if (!currentUser) {
+      return { success: false, message: "Not authenticated" };
+    }
 
     const userId = currentUser.user.id;
     const users = getUsers();
     const idx = users.findIndex((u) => u.userId === userId);
-    if (idx < 0) return { success: false, message: "Account not found" };
+
+    if (idx < 0) {
+      return { success: false, message: "Account not found" };
+    }
 
     if (update.email !== undefined) {
       const collision = users.find(
         (u) => u.userId !== userId && u.email === update.email,
       );
-      if (collision)
+
+      if (collision) {
         return {
           success: false,
           message: "That email is already used by another account.",
         };
+      }
+
       users[idx].email = update.email;
     }
+
     if (update.mobileNumber !== undefined) {
       const collision = users.find(
         (u) => u.userId !== userId && u.mobileNumber === update.mobileNumber,
       );
-      if (collision)
+
+      if (collision) {
         return {
           success: false,
           message: "That mobile number is already used by another account.",
         };
+      }
+
       users[idx].mobileNumber = update.mobileNumber;
     }
 
@@ -658,7 +747,9 @@ export const authService = {
         }),
       },
     };
+
     localStorage.setItem(SESSION_KEY, JSON.stringify(updatedSession));
+
     return { success: true };
   },
 
@@ -675,6 +766,7 @@ export const authService = {
 
     const users = getUsers();
     const idx = users.findIndex((u) => u.userId === userId);
+
     if (idx >= 0) {
       users[idx].fullName = identityData.fullName;
       localStorage.setItem(USERS_KEY, JSON.stringify(users));
@@ -684,14 +776,19 @@ export const authService = {
 
     const updatedUser: MockUser = {
       ...currentUser,
-      user: { ...currentUser.user, fullName: identityData.fullName },
+      user: {
+        ...currentUser.user,
+        fullName: identityData.fullName,
+      },
     };
+
     localStorage.setItem(SESSION_KEY, JSON.stringify(updatedUser));
   },
 
   saveIdentityData: (identityData: unknown): void => {
     const currentUser = authService.getCurrentUser();
     if (!currentUser) return;
+
     localStorage.setItem(
       identityDataKey(currentUser.user.id),
       JSON.stringify(identityData),
@@ -701,8 +798,10 @@ export const authService = {
   getSavedIdentityData: (): Record<string, unknown> | null => {
     const currentUser = authService.getCurrentUser();
     if (!currentUser) return null;
+
     const saved = localStorage.getItem(identityDataKey(currentUser.user.id));
     if (!saved) return null;
+
     try {
       return JSON.parse(saved);
     } catch {
@@ -714,36 +813,42 @@ export const authService = {
     return authService.getSavedIdentityData();
   },
 
-  // FR-02 — Generate a 6-digit OTP for the given mobile number
-  // TODO: Replace with POST /api/otp/send — triggers real SMS via gateway
   generateOtp: (mobile: string): string => {
     const code = Math.floor(100000 + Math.random() * 900000).toString();
+
     writeOtp(mobile, {
       code,
       expiresAt: Date.now() + OTP_TTL_MS,
       attempts: 0,
     });
+
     console.log(`[DEV] OTP for ${mobile}: ${code}`);
+
     return code;
   },
 
-  // FR-02 — Validate an entered OTP for the given mobile number
-  // TODO: Replace with POST /api/otp/validate
   validateOtp: (mobile: string, entered: string): OtpResult => {
     const record = readOtp(mobile);
-    if (!record) return "EXPIRED";
 
+    if (!record) return "EXPIRED";
     if (record.attempts >= OTP_MAX_ATTEMPTS) return "LOCKED";
     if (Date.now() > record.expiresAt) return "EXPIRED";
 
     if (record.code !== entered) {
-      const updated: OtpRecord = { ...record, attempts: record.attempts + 1 };
+      const updated: OtpRecord = {
+        ...record,
+        attempts: record.attempts + 1,
+      };
+
       writeOtp(mobile, updated);
+
       if (updated.attempts >= OTP_MAX_ATTEMPTS) return "LOCKED";
+
       return "INVALID";
     }
 
     localStorage.removeItem(otpKey(mobile));
+
     return "SUCCESS";
   },
 
@@ -755,44 +860,50 @@ export const authService = {
     localStorage.removeItem(otpKey(mobile));
   },
 
-  // FR-05.1 — Lock the account on the user record itself
-  // TODO: POST /api/auth/lock — backend will own the lock state
   lockAccount: (userId: string): void => {
     const user = getUsers().find((u) => u.userId === userId);
+
     if (!user) return;
+
     user.isLocked = true;
     user.lockedAt = Date.now();
     user.failedLoginAttempts = MAX_LOGIN_ATTEMPTS;
+
     writeUser(user);
   },
 
-  // True if user.isLocked is set and the 15-minute window has not yet elapsed.
-  // Auto-unlocks on read only when an existing lock has expired — never
-  // touches counters for users that aren't locked.
   isAccountLocked: (userId: string): boolean => {
     const user = getUsers().find((u) => u.userId === userId);
+
     if (!user || !user.isLocked) return false;
+
     if (lockHasExpired(user)) {
       authService.unlockAccount(userId);
       return false;
     }
+
     return true;
   },
 
-  // FR-05.1 — Returns remaining lock time in milliseconds, or 0 if not locked
   getRemainingLockTime: (userId: string): number => {
     const user = getUsers().find((u) => u.userId === userId);
+
     if (!user || !user.isLocked || !user.lockedAt) return 0;
+
     const remaining = LOCK_DURATION_MS - (Date.now() - user.lockedAt);
+
     return remaining > 0 ? remaining : 0;
   },
 
   unlockAccount: (userId: string): void => {
     const user = getUsers().find((u) => u.userId === userId);
+
     if (!user) return;
+
     user.isLocked = false;
     user.lockedAt = null;
     user.failedLoginAttempts = 0;
+
     writeUser(user);
   },
 
@@ -801,15 +912,16 @@ export const authService = {
     return user?.failedLoginAttempts ?? 0;
   },
 
-  // Returns the userId of any account currently locked. Used by the login
-  // page to re-render the countdown panel after a refresh.
   getPendingLockUserId: (): string | null => {
     const locked = getUsers().find((u) => u.isLocked);
+
     if (!locked) return null;
+
     if (lockHasExpired(locked)) {
       authService.unlockAccount(locked.userId);
       return null;
     }
+
     return locked.userId;
   },
 };

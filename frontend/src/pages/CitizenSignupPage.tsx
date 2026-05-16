@@ -15,6 +15,8 @@ const formatCountdown = (totalSec: number): string => {
 
 const CitizenSignupPage = () => {
   const [formData, setFormData] = useState({
+    firstName: "",
+    lastName: "",
     mobileNumber: "",
     email: "",
     password: "",
@@ -24,6 +26,7 @@ const CitizenSignupPage = () => {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [step, setStep] = useState<Step>("FORM");
+
   const navigate = useNavigate();
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -39,7 +42,10 @@ const CitizenSignupPage = () => {
       return;
     }
 
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    setFormData((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
   };
 
   const handleFormSubmit = (e: React.FormEvent) => {
@@ -47,6 +53,8 @@ const CitizenSignupPage = () => {
     setError("");
 
     if (
+      !formData.firstName ||
+      !formData.lastName ||
       !formData.mobileNumber ||
       !formData.email ||
       !formData.password ||
@@ -72,15 +80,19 @@ const CitizenSignupPage = () => {
 
   const handleOtpSuccess = async () => {
     setIsLoading(true);
+    setError("");
+
     try {
-      await authService.register({
-        mobileNumber: formData.mobileNumber,
-        email: formData.email,
-        password: formData.password,
-      });
+  await authService.register({
+  first_name: formData.firstName,
+  last_name: formData.lastName,
+  phone: formData.mobileNumber,
+  email: formData.email,
+  password: formData.password,
+});
 
       alert(
-        "Account created successfully! Please complete identity verification to use passport services.",
+        "Account created successfully! Please complete identity verification to use passport services."
       );
 
       navigate("/identity-verification");
@@ -106,6 +118,7 @@ const CitizenSignupPage = () => {
             <h1 className="text-2xl font-bold text-gray-800 mb-2">
               Create Citizen Account
             </h1>
+
             <p className="text-gray-600">
               {step === "FORM"
                 ? "Register for passport application services"
@@ -115,6 +128,36 @@ const CitizenSignupPage = () => {
 
           {step === "FORM" && (
             <form onSubmit={handleFormSubmit} className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    First Name *
+                  </label>
+                  <input
+                    type="text"
+                    name="firstName"
+                    value={formData.firstName}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="Enter first name"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Last Name *
+                  </label>
+                  <input
+                    type="text"
+                    name="lastName"
+                    value={formData.lastName}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="Enter last name"
+                  />
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -232,10 +275,11 @@ const OtpStep = ({
   isSubmitting,
 }: OtpStepProps) => {
   const [digits, setDigits] = useState<string[]>(() =>
-    Array(OTP_LENGTH).fill(""),
+    Array(OTP_LENGTH).fill("")
   );
+
   const [secondsLeft, setSecondsLeft] = useState(OTP_DURATION_SEC);
-  const [errorMsg, setErrorMsg] = useState<string>("");
+  const [errorMsg, setErrorMsg] = useState("");
   const [errorKind, setErrorKind] = useState<
     "INVALID" | "EXPIRED" | "LOCKED" | null
   >(null);
@@ -270,6 +314,7 @@ const OtpStep = ({
     if (submittedRef.current) return;
 
     submittedRef.current = true;
+
     const result = authService.validateOtp(mobile, entered);
 
     if (result === "SUCCESS") {
@@ -315,7 +360,7 @@ const OtpStep = ({
       }
 
       if (next.every((d) => d.length === 1)) {
-        submit(next.join(""));
+        setTimeout(() => submit(next.join("")), 0);
       }
 
       return next;
@@ -324,7 +369,7 @@ const OtpStep = ({
 
   const handleKeyDown = (
     idx: number,
-    e: React.KeyboardEvent<HTMLInputElement>,
+    e: React.KeyboardEvent<HTMLInputElement>
   ) => {
     if (e.key === "Backspace") {
       if (digits[idx]) {
@@ -335,6 +380,7 @@ const OtpStep = ({
         });
       } else if (idx > 0) {
         inputsRef.current[idx - 1]?.focus();
+
         setDigits((prev) => {
           const next = [...prev];
           next[idx - 1] = "";
