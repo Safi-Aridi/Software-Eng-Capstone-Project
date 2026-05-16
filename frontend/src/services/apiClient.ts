@@ -36,6 +36,13 @@ const parseResponse = async <T>(res: Response): Promise<T> => {
     handleUnauthorized();
     throw new ApiError("Unauthorized", 401);
   }
+  // 204 No Content has no body. Treat as success and return an empty object
+  // so res.json() is never called on an empty stream. 304 is intentionally
+  // NOT handled here — callers issue cached GETs with cache: 'no-store' to
+  // avoid 304s, because a 304 has no body and would erase response fields.
+  if (res.status === 204) {
+    return {} as T;
+  }
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new ApiError(
@@ -49,9 +56,10 @@ const parseResponse = async <T>(res: Response): Promise<T> => {
 
 export const apiClient = {
   get: <T>(path: string): Promise<T> =>
-    fetch(`${API_BASE_URL}${path}`, { headers: getAuthHeaders() }).then(
-      parseResponse<T>,
-    ),
+    fetch(`${API_BASE_URL}${path}`, {
+      headers: getAuthHeaders(),
+      cache: "no-store",
+    }).then(parseResponse<T>),
 
   post: <T>(path: string, body: unknown): Promise<T> =>
     fetch(`${API_BASE_URL}${path}`, {

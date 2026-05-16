@@ -1,6 +1,7 @@
 import {
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
@@ -237,7 +238,7 @@ export class ApplicationsService {
     }
 
     if (user.role === 'mukhtar') {
-      clauses.push("a.current_status = 'Verified'");
+      clauses.push("a.current_status = 'Fingerprint Required'");
       return;
     }
 
@@ -269,6 +270,21 @@ export class ApplicationsService {
     }
   }
 
+  // P4-D: Mukhtar queue, filtered by the logged-in mukhtar's user_id.
+  // Applications with NULL assigned_mukhtar_id (legacy data) intentionally
+  // never surface in any mukhtar's queue — they would have to be reassigned
+  // by an admin first.
+  async findMukhtarQueue(mukhtarUserId: string) {
+    const query = `
+      ${this.applicationSelect}
+      WHERE a.current_status = 'Fingerprint Required'
+        AND a.assigned_mukhtar_id = $1
+      ORDER BY a.created_at DESC
+    `;
+    const result = await this.databaseService.query(query, [mukhtarUserId]);
+    return result.rows;
+  }
+
   async findAll(role?: string, user?: AuthUser) {
     let query = this.applicationSelect;
     const params: unknown[] = [];
@@ -279,7 +295,7 @@ export class ApplicationsService {
         : undefined;
 
     if (effectiveRole === 'mukhtar') {
-      clauses.push("a.current_status = 'Verified'");
+      clauses.push("a.current_status = 'Fingerprint Required'");
     } else if (effectiveRole === 'officer') {
       clauses.push("a.current_status = 'Mukhtar Signed'");
     } else {
@@ -336,9 +352,10 @@ export class ApplicationsService {
         application_type,
         current_status,
         payment_status,
-        tracking_number
+        tracking_number,
+        assigned_mukhtar_id
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *
     `;
 
@@ -355,6 +372,9 @@ export class ApplicationsService {
       'Pending',
       'Pending',
       trackingNumber,
+      // P4-C: persist the citizen's selected mukhtar so the mukhtar queue can
+      // filter by it. Null is acceptable (legacy behavior).
+      body.assignedMukhtarId ?? null,
     ]);
 
     const created = result.rows[0];
@@ -610,7 +630,7 @@ export class ApplicationsService {
 
     // Fire ML verification async — same as initial submission.
     // Non-blocking: resubmission is accepted regardless; ML will
-    // flip the status to Verified or Resubmission Required on its own.
+    // flip the status to Fingerprint Required or Resubmission Required on its own.
     this.verifyApplicationML(id).catch((err) =>
       console.error('[resubmitDocuments] ML pipeline error:', err),
     );
@@ -860,6 +880,62 @@ export class ApplicationsService {
     };
   }
 
+  // P2-A: ID extraction (port 8000) called synchronously after the application
+  // is created so the citizen sees the parsed identity fields in Step 6 review.
+  // Document storage uses 'national_id_front'/'national_id_back' for id_card
+  // and 'civil_registry_extract' for civil_registry — this matches what the ML
+  // server expects on port 8000 (front_url+back_url OR document_url).
+  async extractIdData(
+    applicationId: string,
+    documentType: 'id_card' | 'civil_registry',
+  ): Promise<unknown> {
+    const ML_BASE_URL = process.env.ML_BASE_URL ?? 'http://64.227.163.65';
+
+    const docs = await this.databaseService.query(
+      `SELECT document_type, file_url FROM documents WHERE application_id = $1`,
+      [applicationId],
+    );
+
+    let payload: Record<string, string>;
+    if (documentType === 'id_card') {
+      const front = docs.rows.find((r: any) => r.document_type === 'national_id_front')?.file_url;
+      const back = docs.rows.find((r: any) => r.document_type === 'national_id_back')?.file_url;
+      if (!front || !back) {
+        throw new NotFoundException('Identity document not uploaded yet');
+      }
+      payload = { document_type: 'id_card', front_url: front, back_url: back };
+    } else {
+      const extract = docs.rows.find(
+        (r: any) => r.document_type === 'civil_registry_extract',
+      )?.file_url;
+      if (!extract) {
+        throw new NotFoundException('Identity document not uploaded yet');
+      }
+      payload = { document_type: 'civil_registry', document_url: extract };
+    }
+
+    try {
+      const res = await fetch(`${ML_BASE_URL}:8000/extract-id-data`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => res.statusText);
+        console.error(`[extractIdData] ML port 8000 ${res.status}: ${errText}`);
+        throw new InternalServerErrorException('Document extraction failed');
+      }
+      const json = await res.json();
+      // ML returns { status: 'success', document_detected, data: {...} }.
+      // Flatten the 'data' payload so the frontend can read fields directly.
+      return json?.data ?? json;
+    } catch (err) {
+      if (err instanceof NotFoundException) throw err;
+      console.error('[extractIdData] ML pipeline error:', err);
+      throw new InternalServerErrorException('Document extraction failed');
+    }
+  }
+
   async updateBiometricFrameUrls(
     applicationId: string,
     frameUrls: string[],
@@ -878,12 +954,12 @@ export class ApplicationsService {
   // --- THE COMPLETE ML VERIFICATION BRIDGE ---
   async verifyApplicationML(applicationId: string) {
     console.log('--- STARTING KYC ML PIPELINE ---');
-    const ML_IP = '64.227.163.65'; // Your DigitalOcean Droplet IP
+    const ML_BASE_URL = process.env.ML_BASE_URL ?? 'http://64.227.163.65';
 
-    let frontUrl = null;
-    let backUrl = null;
-    let extractUrl = null;
-    let passportPhotoUrl = null;
+    let frontUrl: string | null = null;
+    let backUrl: string | null = null;
+    let extractUrl: string | null = null;
+    let passportPhotoUrl: string | null = null;
 
     try {
       // 1. Pull ALL URLs from the database
@@ -899,22 +975,45 @@ export class ApplicationsService {
         if (row.document_type === 'passport_photo') passportPhotoUrl = row.file_url;
       });
 
-      if (!passportPhotoUrl) throw new Error("PASSPORT_ERROR: No Passport Photo found in database.");
+      // P1-D: passport photo is required for the port-8001 face-verification call.
+      // If it's missing, short-circuit immediately — do not call ML at all.
+      if (!passportPhotoUrl) {
+        console.warn(`[verifyApplicationML] No passport photo for ${applicationId} — short-circuiting to Resubmission Required.`);
+        try {
+          const documentId = await this.getOrCreateDocumentId(applicationId, 'passport_photo');
+          await this.databaseService.query(
+            `INSERT INTO resubmission_requests (application_id, document_id, reason, resolved, requested_at)
+             VALUES ($1, $2, $3, false, now())`,
+            [applicationId, documentId, 'Passport photo is required for verification.']
+          );
+        } catch (dbErr) {
+          console.error('[verifyApplicationML] Failed to insert missing-passport resubmission row:', dbErr);
+        }
+        await this.databaseService.query(
+          `UPDATE applications SET current_status = 'Resubmission Required' WHERE application_id = $1`,
+          [applicationId],
+        );
+        return {
+          success: false,
+          status: 'Resubmission Required',
+          error: 'PASSPORT_ERROR: Passport photo is required for verification.',
+        };
+      }
 
       // ==========================================
       // STEP [1/2]: ID EXTRACTION (Port 8000)
       // ==========================================
       let idResponse;
       if (frontUrl && backUrl) {
-        console.log(`[1/2] Sending National ID to ${ML_IP}:8000...`);
-        idResponse = await fetch(`http://${ML_IP}:8000/extract-id-data`, {
+        console.log(`[1/2] Sending National ID to ${ML_BASE_URL}:8000...`);
+        idResponse = await fetch(`${ML_BASE_URL}:8000/extract-id-data`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ document_type: 'id_card', front_url: frontUrl, back_url: backUrl })
         });
       } else if (extractUrl) {
-        console.log(`[1/2] Sending Civil Extract to ${ML_IP}:8000...`);
-        idResponse = await fetch(`http://${ML_IP}:8000/extract-id-data`, {
+        console.log(`[1/2] Sending Civil Extract to ${ML_BASE_URL}:8000...`);
+        idResponse = await fetch(`${ML_BASE_URL}:8000/extract-id-data`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ document_type: 'civil_registry', document_url: extractUrl })
@@ -953,13 +1052,31 @@ export class ApplicationsService {
       // ==========================================
       // STEP [2/2]: VISUAL VERIFICATION (Port 8001)
       // ==========================================
-      console.log(`[2/2] Sending Face Verification to ${ML_IP}:8001...`);
-      
-      // Note: If you stop skipping liveness, you would fetch `face_frame_urls` from 
-      // the biometric_data table here, map them to signed URLs, and pass them below.
-      const livePhotoUrls: string[] = []; 
+      console.log(`[2/2] Sending Face Verification to ${ML_BASE_URL}:8001...`);
 
-      const verifyResponse = await fetch(`http://${ML_IP}:8001/visualize-pipeline`, {
+      // P1-E: pull live face frames from biometric_data when present (NEW
+      // applications). Renewals — and any row missing frames — fall through to
+      // the Mode-A "Dev Skip" path on the ML side with an empty array.
+      let livePhotoUrls: string[] = [];
+      try {
+        const bioResult = await this.databaseService.query(
+          `SELECT face_frame_urls FROM biometric_data WHERE application_id = $1`,
+          [applicationId],
+        );
+        const frames = bioResult.rows[0]?.face_frame_urls;
+        const parsed: unknown =
+          typeof frames === 'string' ? JSON.parse(frames) : frames;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          livePhotoUrls = (parsed as unknown[])
+            .filter((u): u is string => typeof u === 'string' && u.length > 0)
+            .slice(0, 3);
+        }
+      } catch (bioErr) {
+        console.error('[verifyApplicationML] biometric_data lookup failed; proceeding with empty live_photo_urls:', bioErr);
+        livePhotoUrls = [];
+      }
+
+      const verifyResponse = await fetch(`${ML_BASE_URL}:8001/visualize-pipeline`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -984,13 +1101,28 @@ export class ApplicationsService {
       console.log('[2/2] Success! Faces match.');
 
       // ==========================================
-      // FINALIZE: MARK AS VERIFIED
+      // FINALIZE: MARK AS FINGERPRINT REQUIRED
       // ==========================================
-      await this.databaseService.query(`UPDATE applications SET current_status = 'Verified' WHERE application_id = $1`, [applicationId]);
-      await this.databaseService.query(`INSERT INTO application_status_history (application_id, old_status, new_status, change_reason) VALUES ($1, 'Pending', 'Verified', 'Automated ML Verification Passed')`, [applicationId]);
+      await this.databaseService.query(
+        `UPDATE applications SET current_status = 'Fingerprint Required' WHERE application_id = $1`,
+        [applicationId],
+      );
+      await this.databaseService.query(
+        `INSERT INTO application_status_history (application_id, old_status, new_status, change_reason)
+         VALUES ($1, 'Pending', 'Fingerprint Required', 'ML verification passed — citizen required to visit branch for physical fingerprint collection')`,
+        [applicationId],
+      );
+
+      // P3-H: notify the citizen that ML passed and they must visit a branch
+      const citizenUserId = await this.getCitizenUserId(applicationId);
+      await this.notify(
+        citizenUserId,
+        applicationId,
+        'Your documents have been verified. Please visit your nearest General Security branch for physical fingerprint collection to proceed with your application.',
+      );
 
       console.log('--- KYC PIPELINE COMPLETE ---');
-      return { success: true, status: 'Verified' };
+      return { success: true, status: 'Fingerprint Required' };
 
     } catch (error: any) {
       console.error('KYC Pipeline Error:', error.message);

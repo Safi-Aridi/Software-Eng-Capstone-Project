@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { authService } from "../services/authService";
 import {
@@ -8,6 +8,7 @@ import {
 } from "../services/applicationService";
 import { passportService } from "../services/passportService";
 import { documentService } from "../services/documentService";
+import { apiClient } from "../services/apiClient";
 import EnhancedFileUploadField from "../components/upload/EnhancedFileUploadField";
 import BiometricCaptureWidget from "../components/BiometricCaptureWidget";
 
@@ -27,7 +28,49 @@ interface MukhtarForm {
   address: string;
   district: string;
   mukhtarName: string;
+  selectedMukhtarId: string;
 }
+
+// P4-E: Mukhtar option returned by GET /mukhtar/by-district
+interface MukhtarOption {
+  mukhtarId: string;
+  userId: string;
+  fullName: string;
+  district: string;
+  village: string;
+}
+
+// P2-B: Shape returned from POST /applications/:id/extract-id (the ML port-8000
+// "data" payload). All fields optional — extraction is non-blocking.
+interface ExtractedIdData {
+  first_name?: string | { ar?: string; en?: string };
+  last_name?: string | { ar?: string; en?: string };
+  middle_name?: string | { ar?: string; en?: string };
+  father_name?: string | { ar?: string; en?: string };
+  dob?: string | { latin?: string; hindu?: string };
+  registry_number?: string | { latin?: string; hindu?: string };
+  id_number?: string | { latin?: string; hindu?: string };
+  district?: string | { ar?: string; en?: string };
+  governorate?: string | { ar?: string; en?: string };
+  place_of_birth?: string | { ar?: string; en?: string };
+  gender?: string | { ar?: string; en?: string };
+  marital_status?: string | { ar?: string; en?: string };
+  marriage_status?: string | { ar?: string; en?: string };
+  id_photo_base64?: string;
+}
+
+// Helper to coerce a maybe-bilingual field down to a single display string.
+const pickField = (
+  v: ExtractedIdData[keyof ExtractedIdData],
+): string => {
+  if (!v) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "object") {
+    const obj = v as { en?: string; ar?: string; latin?: string; hindu?: string };
+    return obj.en ?? obj.latin ?? obj.ar ?? obj.hindu ?? "";
+  }
+  return "";
+};
 
 const FEE_MAP: Record<ValidityYears, number> = { 5: 200_000, 10: 350_000 };
 
@@ -91,7 +134,24 @@ const NewPassportApplicationPage = () => {
     address: "",
     district: "",
     mukhtarName: "",
+    selectedMukhtarId: "",
   });
+  // P2-B: ML extraction state — populated async after createApplication.
+  const [extractedIdData, setExtractedIdData] =
+    useState<ExtractedIdData | null>(null);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [extractionError, setExtractionError] = useState<string | null>(null);
+  // P4-E: district + mukhtar discovery state
+  const [availableDistricts, setAvailableDistricts] = useState<string[]>([]);
+  const [availableMukhtars, setAvailableMukhtars] = useState<MukhtarOption[]>(
+    [],
+  );
+  const [isLoadingDistricts, setIsLoadingDistricts] = useState(false);
+  const [isLoadingMukhtars, setIsLoadingMukhtars] = useState(false);
+  const [districtFilter, setDistrictFilter] = useState("");
+  const [districtLoadError, setDistrictLoadError] = useState<string | null>(
+    null,
+  );
   const [biometricCaptured, setBiometricCaptured] = useState(false);
   // For NEW applications, the row is created on the Step 4 → Step 5
   // transition so the real UUID is available to the BiometricCaptureWidget.
@@ -104,6 +164,107 @@ const NewPassportApplicationPage = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isAdvancing, setIsAdvancing] = useState(false);
   const [submitError, setSubmitError] = useState("");
+
+  // P4-E: lazy-load district list when the user reaches Step 4.
+  useEffect(() => {
+    console.log(
+      "[districts effect] running, step:",
+      step,
+      "availableDistricts.length:",
+      availableDistricts.length,
+      "isLoadingDistricts:",
+      isLoadingDistricts,
+    );
+
+    if (step !== 4 || availableDistricts.length > 0) {
+      console.log("[districts effect] skipping fetch — condition not met");
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingDistricts(true);
+
+    console.log("[districts effect] starting fetch...");
+
+    apiClient
+      .get<{ districts: string[] }>("/mukhtar/districts")
+      .then((res) => {
+        console.log("[districts effect] raw response:", res);
+        console.log("[districts effect] res.districts:", res.districts);
+        if (!cancelled) {
+          const list = res.districts ?? [];
+          console.log(
+            "[districts effect] setting availableDistricts to:",
+            list,
+          );
+          setAvailableDistricts(list);
+        }
+      })
+      .catch((err) => {
+        console.error("[districts effect] FETCH ERROR:", err);
+        if (!cancelled) {
+          setDistrictLoadError(
+            "Could not load districts: " + err.message,
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingDistricts(false);
+      });
+
+    return () => {
+      cancelled = true;
+      // Always reset the loading flag on cleanup so a re-run never sees a
+      // stale `true` left over from a request whose .finally was skipped.
+      setIsLoadingDistricts(false);
+    };
+  }, [step, availableDistricts.length]);
+
+  // P4-E: re-fetch mukhtar options whenever the selected district changes.
+  useEffect(() => {
+    const district = mukhtarForm.district.trim();
+    if (step !== 4 || !district) {
+      setAvailableMukhtars([]);
+      return;
+    }
+    let cancelled = false;
+    setIsLoadingMukhtars(true);
+    apiClient
+      .get<MukhtarOption[]>(
+        `/mukhtar/by-district?district=${encodeURIComponent(district)}`,
+      )
+      .then((res) => {
+        if (cancelled) return;
+        const list = Array.isArray(res) ? res : [];
+        setAvailableMukhtars(list);
+        // Auto-select when there's only one mukhtar for the district.
+        if (list.length === 1) {
+          setMukhtarForm((prev) => ({
+            ...prev,
+            selectedMukhtarId: list[0].mukhtarId,
+            mukhtarName: list[0].fullName,
+          }));
+        } else {
+          // Clear any stale selection when the district changed.
+          setMukhtarForm((prev) =>
+            prev.selectedMukhtarId &&
+            list.some((m) => m.mukhtarId === prev.selectedMukhtarId)
+              ? prev
+              : { ...prev, selectedMukhtarId: "", mukhtarName: "" },
+          );
+        }
+      })
+      .catch((err) => {
+        console.error("[mukhtar/by-district] fetch failed:", err);
+        setAvailableMukhtars([]);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingMukhtars(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [step, mukhtarForm.district]);
 
   if (!currentUser || currentUser.role !== "citizen") {
     navigate("/");
@@ -144,9 +305,16 @@ const NewPassportApplicationPage = () => {
     if (step === 4) {
       if (!mukhtarForm.address.trim()) errs.address = "Address is required.";
       if (!mukhtarForm.district.trim())
-        errs.district = "District / Qada is required.";
-      if (!mukhtarForm.mukhtarName.trim())
-        errs.mukhtarName = "Mukhtar's name is required.";
+        errs.district = "District is required.";
+      // Mukhtar selection is only required when at least one mukhtar exists
+      // for the chosen district. If the district has zero mukhtars we allow
+      // the citizen to proceed (assignedMukhtarId stays null).
+      if (
+        availableMukhtars.length > 0 &&
+        !mukhtarForm.selectedMukhtarId.trim()
+      ) {
+        errs.mukhtarName = "Please select a Mukhtar.";
+      }
     }
     if (step === 5 && applicationType === "NEW" && !biometricCaptured) {
       errs.biometric = "Biometric capture must be completed before proceeding.";
@@ -190,6 +358,27 @@ const NewPassportApplicationPage = () => {
           },
         );
         setCreatedApplicationId(created.applicationId);
+
+        // P2-B: Fire ML ID extraction async (non-blocking).
+        // The selected documentType maps to the ML port-8000 contract.
+        const mlDocType =
+          identityDocumentType === "NATIONAL_ID" ? "id_card" : "civil_registry";
+        setIsExtracting(true);
+        setExtractionError(null);
+        apiClient
+          .post<ExtractedIdData>(
+            `/applications/${created.applicationId}/extract-id`,
+            { documentType: mlDocType },
+          )
+          .then((data) => {
+            setExtractedIdData(data);
+            setIsExtracting(false);
+          })
+          .catch((extractErr) => {
+            console.error("[extract-id] failed:", extractErr);
+            setExtractionError("Could not extract document data.");
+            setIsExtracting(false);
+          });
       } catch (err) {
         setSubmitError(
           err instanceof Error
@@ -328,14 +517,15 @@ const NewPassportApplicationPage = () => {
       await documentService.uploadDocuments(finalApplicationId, documents);
 
       // --- THE ML BRIDGE ---
+      // Fire-and-forget: ML pipeline runs server-side and updates application
+      // status to 'Fingerprint Required' or 'Resubmission Required' on its own.
+      // Errors are non-blocking — the citizen still navigates to payment.
       console.log("Triggering ML Pipeline...");
       try {
-        await fetch(`http://localhost:5000/api/applications/${finalApplicationId}/verify`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('npis_token')}`
-          }
-        });
+        await apiClient.post(
+          `/applications/${finalApplicationId}/verify`,
+          {},
+        );
       } catch (e) {
         console.error("ML Error:", e);
       }
@@ -411,6 +601,29 @@ const NewPassportApplicationPage = () => {
               mukhtarForm={mukhtarForm}
               onMukhtarChange={handleMukhtarChange}
               errors={stepErrors}
+              availableDistricts={availableDistricts}
+              availableMukhtars={availableMukhtars}
+              isLoadingDistricts={isLoadingDistricts}
+              isLoadingMukhtars={isLoadingMukhtars}
+              districtLoadError={districtLoadError}
+              districtFilter={districtFilter}
+              onDistrictFilterChange={setDistrictFilter}
+              onSelectDistrict={(d) =>
+                setMukhtarForm((prev) => ({
+                  ...prev,
+                  district: d,
+                  // Clear any stale mukhtar selection on district change.
+                  selectedMukhtarId: "",
+                  mukhtarName: "",
+                }))
+              }
+              onSelectMukhtar={(m) =>
+                setMukhtarForm((prev) => ({
+                  ...prev,
+                  selectedMukhtarId: m.mukhtarId,
+                  mukhtarName: m.fullName,
+                }))
+              }
             />
           )}
           {step === 5 && applicationType === "NEW" && createdApplicationId && (
@@ -435,6 +648,9 @@ const NewPassportApplicationPage = () => {
               biometricCaptured={biometricCaptured}
               feeAcknowledged={feeAcknowledged}
               onToggleFeeAcknowledged={() => setFeeAcknowledged((v) => !v)}
+              extractedIdData={extractedIdData}
+              isExtracting={isExtracting}
+              extractionError={extractionError}
             />
           )}
 
@@ -792,73 +1008,181 @@ const Step4MukhtarDetails = ({
   mukhtarForm,
   onMukhtarChange,
   errors,
+  availableDistricts,
+  availableMukhtars,
+  isLoadingDistricts,
+  isLoadingMukhtars,
+  districtLoadError,
+  districtFilter,
+  onDistrictFilterChange,
+  onSelectDistrict,
+  onSelectMukhtar,
 }: {
   mukhtarForm: MukhtarForm;
   onMukhtarChange: (field: keyof MukhtarForm, value: string) => void;
   errors: Record<string, string>;
-}) => (
-  <div>
-    <h2 className="text-lg font-semibold text-gray-800 mb-1">
-      Mukhtar Details
-    </h2>
-    <p className="text-gray-500 text-sm mb-6">
-      Provide your mukhtar's details.
-    </p>
+  availableDistricts: string[];
+  availableMukhtars: MukhtarOption[];
+  isLoadingDistricts: boolean;
+  isLoadingMukhtars: boolean;
+  districtLoadError: string | null;
+  districtFilter: string;
+  onDistrictFilterChange: (s: string) => void;
+  onSelectDistrict: (d: string) => void;
+  onSelectMukhtar: (m: MukhtarOption) => void;
+}) => {
+  console.log(
+    "[Step4] availableDistricts:",
+    availableDistricts,
+    "districtFilter:",
+    districtFilter,
+  );
+  const filteredDistricts = districtFilter.trim()
+    ? availableDistricts.filter((d) =>
+        d.toLowerCase().includes(districtFilter.trim().toLowerCase()),
+      )
+    : availableDistricts;
 
-    <div className="space-y-4">
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Address <span className="text-red-500">*</span>
-        </label>
-        <input
-          type="text"
-          value={mukhtarForm.address}
-          onChange={(e) => onMukhtarChange("address", e.target.value)}
-          className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
-            ${errors.address ? "border-red-400" : "border-gray-300"}`}
-          placeholder="Enter your full address"
-        />
-        {errors.address && (
-          <p className="text-red-600 text-xs mt-1">{errors.address}</p>
-        )}
-      </div>
+  return (
+    <div>
+      <h2 className="text-lg font-semibold text-gray-800 mb-1">
+        Mukhtar Details
+      </h2>
+      <p className="text-gray-500 text-sm mb-6">
+        Provide your address and select your district. We'll show you the
+        Mukhtar(s) registered for that district.
+      </p>
 
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          District / Qada <span className="text-red-500">*</span>
-        </label>
-        <input
-          type="text"
-          value={mukhtarForm.district}
-          onChange={(e) => onMukhtarChange("district", e.target.value)}
-          className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
-            ${errors.district ? "border-red-400" : "border-gray-300"}`}
-          placeholder="Enter your district or qada"
-        />
-        {errors.district && (
-          <p className="text-red-600 text-xs mt-1">{errors.district}</p>
-        )}
-      </div>
+      <div className="space-y-5">
+        {/* Section 1: Address */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Your residential address <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
+            value={mukhtarForm.address}
+            onChange={(e) => onMukhtarChange("address", e.target.value)}
+            className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
+              ${errors.address ? "border-red-400" : "border-gray-300"}`}
+            placeholder="Enter your full address"
+          />
+          {errors.address && (
+            <p className="text-red-600 text-xs mt-1">{errors.address}</p>
+          )}
+        </div>
 
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Mukhtar's Name <span className="text-red-500">*</span>
-        </label>
-        <input
-          type="text"
-          value={mukhtarForm.mukhtarName}
-          onChange={(e) => onMukhtarChange("mukhtarName", e.target.value)}
-          className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
-            ${errors.mukhtarName ? "border-red-400" : "border-gray-300"}`}
-          placeholder="Enter your mukhtar's full name"
-        />
-        {errors.mukhtarName && (
-          <p className="text-red-600 text-xs mt-1">{errors.mukhtarName}</p>
+        {/* Section 2: District */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Your district <span className="text-red-500">*</span>
+          </label>
+          {districtLoadError && (
+            <p className="text-red-500 text-sm">{districtLoadError}</p>
+          )}
+          {isLoadingDistricts ? (
+            <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
+              <span className="inline-block w-4 h-4 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin" />
+              Loading districts...
+            </div>
+          ) : (
+            <>
+              <input
+                type="text"
+                value={districtFilter}
+                onChange={(e) => onDistrictFilterChange(e.target.value)}
+                className="w-full mb-2 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                placeholder="Filter districts..."
+              />
+              <select
+                value={mukhtarForm.district}
+                onChange={(e) => onSelectDistrict(e.target.value)}
+                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white
+                  ${errors.district ? "border-red-400" : "border-gray-300"}`}
+              >
+                <option value="">— Select a district —</option>
+                {filteredDistricts.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
+          {errors.district && (
+            <p className="text-red-600 text-xs mt-1">{errors.district}</p>
+          )}
+        </div>
+
+        {/* Section 3: Mukhtar selection */}
+        {mukhtarForm.district && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Select your Mukhtar <span className="text-red-500">*</span>
+            </label>
+            {isLoadingMukhtars ? (
+              <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
+                <span className="inline-block w-4 h-4 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin" />
+                Loading mukhtars for {mukhtarForm.district}...
+              </div>
+            ) : availableMukhtars.length === 0 ? (
+              <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded p-3">
+                No Mukhtar found for this district. Please contact General
+                Security. You may continue without selecting one.
+              </p>
+            ) : availableMukhtars.length === 1 ? (
+              <div className="p-4 rounded-lg border-2 border-green-500 bg-green-50 flex items-start gap-3">
+                <span className="text-green-600 text-xl">✓</span>
+                <div>
+                  <p className="font-medium text-gray-800">
+                    Your Mukhtar: {availableMukhtars[0].fullName}
+                  </p>
+                  <p className="text-sm text-gray-600">
+                    {availableMukhtars[0].village ?? "—"},{" "}
+                    {availableMukhtars[0].district}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {availableMukhtars.map((m) => {
+                  const checked = mukhtarForm.selectedMukhtarId === m.mukhtarId;
+                  return (
+                    <label
+                      key={m.mukhtarId}
+                      className={`flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all
+                        ${checked ? "border-blue-600 bg-blue-50" : "border-gray-200 hover:border-blue-300"}`}
+                    >
+                      <input
+                        type="radio"
+                        name="mukhtarOption"
+                        value={m.mukhtarId}
+                        checked={checked}
+                        onChange={() => onSelectMukhtar(m)}
+                        className="mt-1 accent-blue-600"
+                      />
+                      <div>
+                        <p className="font-medium text-gray-800">
+                          {m.fullName}
+                        </p>
+                        <p className="text-sm text-gray-500">
+                          {m.village ?? "—"}, {m.district}
+                        </p>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+            {errors.mukhtarName && (
+              <p className="text-red-600 text-xs mt-1">{errors.mukhtarName}</p>
+            )}
+          </div>
         )}
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 // ─── Step 5: Biometric Capture (NEW applications only) ────────────────────────
 
@@ -926,6 +1250,9 @@ const Step6Review = ({
   biometricCaptured,
   feeAcknowledged,
   onToggleFeeAcknowledged,
+  extractedIdData,
+  isExtracting,
+  extractionError,
 }: {
   applicationType: ApplicationType;
   passportValidity: ValidityYears;
@@ -936,6 +1263,9 @@ const Step6Review = ({
   biometricCaptured: boolean;
   feeAcknowledged: boolean;
   onToggleFeeAcknowledged: () => void;
+  extractedIdData: ExtractedIdData | null;
+  isExtracting: boolean;
+  extractionError: string | null;
 }) => (
   <div>
     <h2 className="text-lg font-semibold text-gray-800 mb-1">
@@ -1013,6 +1343,124 @@ const Step6Review = ({
         </ReviewSection>
       )}
     </div>
+
+    {/* P2-C: Extracted Identity Data panel — non-blocking, informational only */}
+    {(isExtracting || extractionError || extractedIdData) && (
+      <div className="mt-5 p-4 bg-white border-2 border-gray-200 rounded-lg">
+        <div className="flex items-start gap-3">
+          {extractedIdData?.id_photo_base64 && (
+            <img
+              src={extractedIdData.id_photo_base64}
+              alt="Extracted ID photo"
+              className="w-12 h-12 object-cover rounded border border-gray-300 shrink-0"
+            />
+          )}
+          <div className="flex-1">
+            <h3 className="font-medium text-gray-800 text-sm mb-2">
+              📋 Extracted from your identity document
+            </h3>
+            {isExtracting && (
+              <div className="flex items-center gap-2 text-gray-500 text-sm">
+                <span className="inline-block w-4 h-4 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin" />
+                Extracting document data...
+              </div>
+            )}
+            {!isExtracting && extractionError && (
+              <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                Document data could not be extracted automatically. Please
+                verify your information manually.
+              </p>
+            )}
+            {!isExtracting && !extractionError && extractedIdData && (
+              <>
+                <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                  {(() => {
+                    const first = pickField(extractedIdData.first_name);
+                    const middle = pickField(extractedIdData.middle_name);
+                    const last = pickField(extractedIdData.last_name);
+                    const fullName = [first, middle, last]
+                      .filter(Boolean)
+                      .join(" ");
+                    return fullName ? (
+                      <div className="flex justify-between gap-3 sm:col-span-2">
+                        <dt className="text-gray-500">Full Name</dt>
+                        <dd className="text-gray-800 font-medium text-right">
+                          {fullName}
+                        </dd>
+                      </div>
+                    ) : null;
+                  })()}
+                  {pickField(extractedIdData.dob) && (
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-gray-500">Date of Birth</dt>
+                      <dd className="text-gray-800 font-medium">
+                        {pickField(extractedIdData.dob)}
+                      </dd>
+                    </div>
+                  )}
+                  {(pickField(extractedIdData.registry_number) ||
+                    pickField(extractedIdData.id_number)) && (
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-gray-500">Registry Number</dt>
+                      <dd className="text-gray-800 font-medium font-mono">
+                        {pickField(extractedIdData.registry_number) ||
+                          pickField(extractedIdData.id_number)}
+                      </dd>
+                    </div>
+                  )}
+                  {pickField(extractedIdData.district) && (
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-gray-500">District</dt>
+                      <dd className="text-gray-800 font-medium">
+                        {pickField(extractedIdData.district)}
+                      </dd>
+                    </div>
+                  )}
+                  {pickField(extractedIdData.governorate) && (
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-gray-500">Governorate</dt>
+                      <dd className="text-gray-800 font-medium">
+                        {pickField(extractedIdData.governorate)}
+                      </dd>
+                    </div>
+                  )}
+                  {pickField(extractedIdData.place_of_birth) && (
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-gray-500">Place of Birth</dt>
+                      <dd className="text-gray-800 font-medium">
+                        {pickField(extractedIdData.place_of_birth)}
+                      </dd>
+                    </div>
+                  )}
+                  {pickField(extractedIdData.gender) && (
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-gray-500">Gender</dt>
+                      <dd className="text-gray-800 font-medium">
+                        {pickField(extractedIdData.gender)}
+                      </dd>
+                    </div>
+                  )}
+                  {(pickField(extractedIdData.marital_status) ||
+                    pickField(extractedIdData.marriage_status)) && (
+                    <div className="flex justify-between gap-3">
+                      <dt className="text-gray-500">Marital Status</dt>
+                      <dd className="text-gray-800 font-medium">
+                        {pickField(extractedIdData.marital_status) ||
+                          pickField(extractedIdData.marriage_status)}
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+                <p className="mt-3 text-xs text-amber-700">
+                  ⚠ If this information is incorrect, please go back and
+                  re-upload your identity document.
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
 
     <div className="mt-5 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-start gap-3">
       <svg

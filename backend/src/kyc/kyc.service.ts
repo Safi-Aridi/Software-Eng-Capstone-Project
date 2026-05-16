@@ -2,8 +2,9 @@ import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
 
 @Injectable()
 export class KycService {
-  // TODO: Replace this with your actual DigitalOcean Public IP!
-  private readonly ML_IP = '64.227.163.65A';
+  // ML microservice base URL (Digital Ocean droplet). Configured via ML_BASE_URL env var.
+  private readonly ML_BASE_URL =
+    process.env.ML_BASE_URL ?? 'http://64.227.163.65';
 
   async submit(body: any) {
     try {
@@ -22,8 +23,8 @@ export class KycService {
       // ---------------------------------------------------------
       // STEP 1: ID EXTRACTION (Port 8000)
       // ---------------------------------------------------------
-      console.log(`[1/2] Sending ID to ${this.ML_IP}:8000...`);
-      const idResponse = await fetch(`http://${this.ML_IP}:8000/extract-id-data`, {
+      console.log(`[1/2] Sending ID to ${this.ML_BASE_URL}:8000...`);
+      const idResponse = await fetch(`${this.ML_BASE_URL}:8000/extract-id-data`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -52,12 +53,12 @@ export class KycService {
       let faceHtmlReport = 'No live photos provided for verification.';
       
       if (faceFrames && faceFrames.length > 0) {
-        console.log(`[2/2] Sending Biometrics to ${this.ML_IP}:8001...`);
-        
+        console.log(`[2/2] Sending Biometrics to ${this.ML_BASE_URL}:8001...`);
+
         // Your Python code STRICTLY wants exactly 3 URLs to avoid crashing
         const top3Frames = faceFrames.slice(0, 3);
 
-        const faceResponse = await fetch(`http://${this.ML_IP}:8001/visualize-pipeline`, {
+        const faceResponse = await fetch(`${this.ML_BASE_URL}:8001/visualize-pipeline`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -83,7 +84,7 @@ export class KycService {
         message: 'KYC ML Pipeline executed successfully',
         extractedIdData: idResult.data,
         faceVerificationHtml: faceHtmlReport, 
-        status: 'Verified'
+        status: 'Fingerprint Required'
       };
 
     } catch (error: any) {
