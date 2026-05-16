@@ -43,13 +43,21 @@ interface MukhtarOption {
 // P2-B: Shape returned from POST /applications/:id/extract-id (the ML port-8000
 // "data" payload). All fields optional — extraction is non-blocking.
 interface ExtractedIdData {
+  data?: ExtractedIdData;
+  full_name?: string | { ar?: string; en?: string };
+  fullName?: string | { ar?: string; en?: string };
   first_name?: string | { ar?: string; en?: string };
   last_name?: string | { ar?: string; en?: string };
   middle_name?: string | { ar?: string; en?: string };
   father_name?: string | { ar?: string; en?: string };
+  date_of_birth?: string | { latin?: string; hindu?: string };
+  birth_date?: string | { latin?: string; hindu?: string };
   dob?: string | { latin?: string; hindu?: string };
+  extract_registry_number?: string | { latin?: string; hindu?: string };
   registry_number?: string | { latin?: string; hindu?: string };
   id_number?: string | { latin?: string; hindu?: string };
+  place_of_residence?: string | { ar?: string; en?: string };
+  residence?: string | { ar?: string; en?: string };
   district?: string | { ar?: string; en?: string };
   governorate?: string | { ar?: string; en?: string };
   place_of_birth?: string | { ar?: string; en?: string };
@@ -57,6 +65,10 @@ interface ExtractedIdData {
   marital_status?: string | { ar?: string; en?: string };
   marriage_status?: string | { ar?: string; en?: string };
   id_photo_base64?: string;
+  extract_photo_base64?: string;
+  photo_base64?: string;
+  face_base64?: string;
+  cropped_face?: string;
 }
 
 // Helper to coerce a maybe-bilingual field down to a single display string.
@@ -71,6 +83,45 @@ const pickField = (
   }
   return "";
 };
+
+const unwrapExtractedIdData = (value: unknown): ExtractedIdData | null => {
+  if (!value || typeof value !== "object") return null;
+  const obj = value as ExtractedIdData;
+  if (obj.data && typeof obj.data === "object") return obj.data;
+  return obj;
+};
+
+const getExtractedPhoto = (data: ExtractedIdData): string =>
+  data.id_photo_base64 ??
+  data.extract_photo_base64 ??
+  data.photo_base64 ??
+  data.face_base64 ??
+  data.cropped_face ??
+  "";
+
+const hasDisplayableExtractedData = (data: ExtractedIdData): boolean =>
+  Boolean(
+    getExtractedPhoto(data) ||
+      pickField(data.full_name) ||
+      pickField(data.fullName) ||
+      pickField(data.first_name) ||
+      pickField(data.middle_name) ||
+      pickField(data.last_name) ||
+      pickField(data.dob) ||
+      pickField(data.date_of_birth) ||
+      pickField(data.birth_date) ||
+      pickField(data.registry_number) ||
+      pickField(data.extract_registry_number) ||
+      pickField(data.id_number) ||
+      pickField(data.place_of_residence) ||
+      pickField(data.residence) ||
+      pickField(data.district) ||
+      pickField(data.governorate) ||
+      pickField(data.place_of_birth) ||
+      pickField(data.gender) ||
+      pickField(data.marital_status) ||
+      pickField(data.marriage_status),
+  );
 
 const FEE_MAP: Record<ValidityYears, number> = { 5: 200_000, 10: 350_000 };
 
@@ -159,6 +210,8 @@ const NewPassportApplicationPage = () => {
   const [createdApplicationId, setCreatedApplicationId] = useState<
     string | null
   >(null);
+  const [uploadedDocumentsApplicationId, setUploadedDocumentsApplicationId] =
+    useState<string | null>(null);
   const [feeAcknowledged, setFeeAcknowledged] = useState(false);
   const [stepErrors, setStepErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -327,6 +380,31 @@ const NewPassportApplicationPage = () => {
 
     setStepErrors({});
 
+    const runIdentityExtraction = async (applicationId: string) => {
+      const mlDocType =
+        identityDocumentType === "NATIONAL_ID" ? "id_card" : "civil_registry";
+      setIsExtracting(true);
+      setExtractionError(null);
+      try {
+        const raw = await apiClient.post<unknown>(
+          `/applications/${applicationId}/extract-id`,
+          { documentType: mlDocType },
+        );
+        setExtractedIdData(unwrapExtractedIdData(raw));
+      } catch (extractErr) {
+        console.error("[extract-id] failed:", extractErr);
+        setExtractionError("Could not extract document data.");
+      } finally {
+        setIsExtracting(false);
+      }
+    };
+
+    const uploadDocumentsForExtraction = async (applicationId: string) => {
+      if (uploadedDocumentsApplicationId === applicationId) return;
+      await documentService.uploadDocuments(applicationId, documents);
+      setUploadedDocumentsApplicationId(applicationId);
+    };
+
     // Step 4 → Step 5 transition for NEW applications: create the application
     // now so its real UUID can be used as the storage path for face frames.
     // If the user navigated Back and is re-advancing, reuse the existing id.
@@ -359,31 +437,35 @@ const NewPassportApplicationPage = () => {
         );
         setCreatedApplicationId(created.applicationId);
 
-        // P2-B: Fire ML ID extraction async (non-blocking).
-        // The selected documentType maps to the ML port-8000 contract.
-        const mlDocType =
-          identityDocumentType === "NATIONAL_ID" ? "id_card" : "civil_registry";
-        setIsExtracting(true);
-        setExtractionError(null);
-        apiClient
-          .post<ExtractedIdData>(
-            `/applications/${created.applicationId}/extract-id`,
-            { documentType: mlDocType },
-          )
-          .then((data) => {
-            setExtractedIdData(data);
-            setIsExtracting(false);
-          })
-          .catch((extractErr) => {
-            console.error("[extract-id] failed:", extractErr);
-            setExtractionError("Could not extract document data.");
-            setIsExtracting(false);
-          });
+        await uploadDocumentsForExtraction(created.applicationId);
+        await runIdentityExtraction(created.applicationId);
       } catch (err) {
         setSubmitError(
           err instanceof Error
             ? err.message
             : "Failed to create application. Please try again.",
+        );
+        return;
+      } finally {
+        setIsAdvancing(false);
+      }
+    }
+
+    if (
+      step === 4 &&
+      applicationType === "NEW" &&
+      createdApplicationId !== null
+    ) {
+      setIsAdvancing(true);
+      setSubmitError("");
+      try {
+        await uploadDocumentsForExtraction(createdApplicationId);
+        await runIdentityExtraction(createdApplicationId);
+      } catch (err) {
+        setSubmitError(
+          err instanceof Error
+            ? err.message
+            : "Failed to prepare document extraction. Please try again.",
         );
         return;
       } finally {
@@ -421,15 +503,24 @@ const NewPassportApplicationPage = () => {
   // Type validation now lives inside EnhancedFileUploadField; parent only stores the accepted file.
   const handleFileChange = (field: keyof DocumentFiles, file: File | null) => {
     setDocuments((prev) => ({ ...prev, [field]: file }));
+    setUploadedDocumentsApplicationId(null);
+    setExtractedIdData(null);
+    setExtractionError(null);
     if (file) setStepErrors((prev) => ({ ...prev, [field]: "" }));
   };
 
   const clearFile = (field: keyof DocumentFiles) => {
     setDocuments((prev) => ({ ...prev, [field]: null }));
+    setUploadedDocumentsApplicationId(null);
+    setExtractedIdData(null);
+    setExtractionError(null);
   };
 
   const handleIdentityDocumentTypeChange = (type: IdentityDocumentType) => {
     setIdentityDocumentType(type);
+    setUploadedDocumentsApplicationId(null);
+    setExtractedIdData(null);
+    setExtractionError(null);
     setDocuments((prev) =>
       type === "NATIONAL_ID"
         ? { ...prev, identityDocument: null, civilRegistryExtract: null }
@@ -514,7 +605,10 @@ const NewPassportApplicationPage = () => {
         throw new Error("Application ID missing — please restart the flow.");
       }
 
-      await documentService.uploadDocuments(finalApplicationId, documents);
+      if (uploadedDocumentsApplicationId !== finalApplicationId) {
+        await documentService.uploadDocuments(finalApplicationId, documents);
+        setUploadedDocumentsApplicationId(finalApplicationId);
+      }
 
       // --- THE ML BRIDGE ---
       // Fire-and-forget: ML pipeline runs server-side and updates application
@@ -1348,9 +1442,9 @@ const Step6Review = ({
     {(isExtracting || extractionError || extractedIdData) && (
       <div className="mt-5 p-4 bg-white border-2 border-gray-200 rounded-lg">
         <div className="flex items-start gap-3">
-          {extractedIdData?.id_photo_base64 && (
+          {extractedIdData && getExtractedPhoto(extractedIdData) && (
             <img
-              src={extractedIdData.id_photo_base64}
+              src={getExtractedPhoto(extractedIdData)}
               alt="Extracted ID photo"
               className="w-12 h-12 object-cover rounded border border-gray-300 shrink-0"
             />
@@ -1373,84 +1467,110 @@ const Step6Review = ({
             )}
             {!isExtracting && !extractionError && extractedIdData && (
               <>
-                <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                  {(() => {
-                    const first = pickField(extractedIdData.first_name);
-                    const middle = pickField(extractedIdData.middle_name);
-                    const last = pickField(extractedIdData.last_name);
-                    const fullName = [first, middle, last]
-                      .filter(Boolean)
-                      .join(" ");
-                    return fullName ? (
-                      <div className="flex justify-between gap-3 sm:col-span-2">
-                        <dt className="text-gray-500">Full Name</dt>
-                        <dd className="text-gray-800 font-medium text-right">
-                          {fullName}
+                {hasDisplayableExtractedData(extractedIdData) ? (
+                  <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                    {(() => {
+                      const directFullName =
+                        pickField(extractedIdData.full_name) ||
+                        pickField(extractedIdData.fullName);
+                      const first = pickField(extractedIdData.first_name);
+                      const middle = pickField(extractedIdData.middle_name);
+                      const last = pickField(extractedIdData.last_name);
+                      const fullName =
+                        directFullName ||
+                        [first, middle, last].filter(Boolean).join(" ");
+                      return fullName ? (
+                        <div className="flex justify-between gap-3 sm:col-span-2">
+                          <dt className="text-gray-500">Full Name</dt>
+                          <dd className="text-gray-800 font-medium text-right">
+                            {fullName}
+                          </dd>
+                        </div>
+                      ) : null;
+                    })()}
+                    {(pickField(extractedIdData.dob) ||
+                      pickField(extractedIdData.date_of_birth) ||
+                      pickField(extractedIdData.birth_date)) && (
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-gray-500">Date of Birth</dt>
+                        <dd className="text-gray-800 font-medium">
+                          {pickField(extractedIdData.dob) ||
+                            pickField(extractedIdData.date_of_birth) ||
+                            pickField(extractedIdData.birth_date)}
                         </dd>
                       </div>
-                    ) : null;
-                  })()}
-                  {pickField(extractedIdData.dob) && (
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-gray-500">Date of Birth</dt>
-                      <dd className="text-gray-800 font-medium">
-                        {pickField(extractedIdData.dob)}
-                      </dd>
-                    </div>
-                  )}
-                  {(pickField(extractedIdData.registry_number) ||
-                    pickField(extractedIdData.id_number)) && (
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-gray-500">Registry Number</dt>
-                      <dd className="text-gray-800 font-medium font-mono">
-                        {pickField(extractedIdData.registry_number) ||
-                          pickField(extractedIdData.id_number)}
-                      </dd>
-                    </div>
-                  )}
-                  {pickField(extractedIdData.district) && (
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-gray-500">District</dt>
-                      <dd className="text-gray-800 font-medium">
-                        {pickField(extractedIdData.district)}
-                      </dd>
-                    </div>
-                  )}
-                  {pickField(extractedIdData.governorate) && (
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-gray-500">Governorate</dt>
-                      <dd className="text-gray-800 font-medium">
-                        {pickField(extractedIdData.governorate)}
-                      </dd>
-                    </div>
-                  )}
-                  {pickField(extractedIdData.place_of_birth) && (
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-gray-500">Place of Birth</dt>
-                      <dd className="text-gray-800 font-medium">
-                        {pickField(extractedIdData.place_of_birth)}
-                      </dd>
-                    </div>
-                  )}
-                  {pickField(extractedIdData.gender) && (
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-gray-500">Gender</dt>
-                      <dd className="text-gray-800 font-medium">
-                        {pickField(extractedIdData.gender)}
-                      </dd>
-                    </div>
-                  )}
-                  {(pickField(extractedIdData.marital_status) ||
-                    pickField(extractedIdData.marriage_status)) && (
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-gray-500">Marital Status</dt>
-                      <dd className="text-gray-800 font-medium">
-                        {pickField(extractedIdData.marital_status) ||
-                          pickField(extractedIdData.marriage_status)}
-                      </dd>
-                    </div>
-                  )}
-                </dl>
+                    )}
+                    {(pickField(extractedIdData.registry_number) ||
+                      pickField(extractedIdData.extract_registry_number) ||
+                      pickField(extractedIdData.id_number)) && (
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-gray-500">Registry Number</dt>
+                        <dd className="text-gray-800 font-medium font-mono">
+                          {pickField(extractedIdData.registry_number) ||
+                            pickField(extractedIdData.extract_registry_number) ||
+                            pickField(extractedIdData.id_number)}
+                        </dd>
+                      </div>
+                    )}
+                    {(pickField(extractedIdData.place_of_residence) ||
+                      pickField(extractedIdData.residence)) && (
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-gray-500">Residence</dt>
+                        <dd className="text-gray-800 font-medium">
+                          {pickField(extractedIdData.place_of_residence) ||
+                            pickField(extractedIdData.residence)}
+                        </dd>
+                      </div>
+                    )}
+                    {pickField(extractedIdData.district) && (
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-gray-500">District</dt>
+                        <dd className="text-gray-800 font-medium">
+                          {pickField(extractedIdData.district)}
+                        </dd>
+                      </div>
+                    )}
+                    {pickField(extractedIdData.governorate) && (
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-gray-500">Governorate</dt>
+                        <dd className="text-gray-800 font-medium">
+                          {pickField(extractedIdData.governorate)}
+                        </dd>
+                      </div>
+                    )}
+                    {pickField(extractedIdData.place_of_birth) && (
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-gray-500">Place of Birth</dt>
+                        <dd className="text-gray-800 font-medium">
+                          {pickField(extractedIdData.place_of_birth)}
+                        </dd>
+                      </div>
+                    )}
+                    {pickField(extractedIdData.gender) && (
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-gray-500">Gender</dt>
+                        <dd className="text-gray-800 font-medium">
+                          {pickField(extractedIdData.gender)}
+                        </dd>
+                      </div>
+                    )}
+                    {(pickField(extractedIdData.marital_status) ||
+                      pickField(extractedIdData.marriage_status)) && (
+                      <div className="flex justify-between gap-3">
+                        <dt className="text-gray-500">Marital Status</dt>
+                        <dd className="text-gray-800 font-medium">
+                          {pickField(extractedIdData.marital_status) ||
+                            pickField(extractedIdData.marriage_status)}
+                        </dd>
+                      </div>
+                    )}
+                  </dl>
+                ) : (
+                  <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                    Extraction completed, but the service did not return any
+                    displayable identity fields.
+                  </p>
+                )}
                 <p className="mt-3 text-xs text-amber-700">
                   ⚠ If this information is incorrect, please go back and
                   re-upload your identity document.
