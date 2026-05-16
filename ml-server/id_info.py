@@ -23,8 +23,10 @@ vertexai.init(project="project-7648918a-4e32-4422-9be", location="us-central1")
 gemini_model = GenerativeModel("gemini-2.5-flash")
 
 class DocumentRequest(BaseModel):
-    front_url: str
-    back_url: str
+    document_type: str = "id_card"
+    front_url: str | None = None
+    back_url: str | None = None
+    document_url: str | None = None
 
 # ==========================================
 # HELPER: QR CODE SCANNER (DETERMINISTIC)

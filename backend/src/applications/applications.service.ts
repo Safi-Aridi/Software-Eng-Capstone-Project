@@ -926,7 +926,16 @@ export class ApplicationsService {
      let idData;
       if (!idResponse.ok) {
         let mlError = "Invalid ID Document.";
-        try { const errData = await idResponse.json(); mlError = errData.detail || errData.error || errData.message; } catch { mlError = await idResponse.text(); }
+        try { 
+          const errData = await idResponse.json();
+          // Pydantic validation errors come as an array in errData.detail
+          if (Array.isArray(errData.detail)) {
+            mlError = "Document format was rejected by the verification engine. Please re-upload.";
+          } else {
+            const raw = errData.detail || errData.error || errData.message || errData;
+            mlError = typeof raw === 'object' ? JSON.stringify(raw) : String(raw);
+          }
+        } catch { mlError = await idResponse.text(); }
         throw new Error(`ID_ERROR: ${mlError}`);
       }
       idData = await idResponse.json();
